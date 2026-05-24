@@ -22,11 +22,9 @@ from typing import Any
 import uuid
 
 import httpx
-from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
-from langchain_core.tools import StructuredTool
-from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 
 from dimos.agents.mcp import tool_stream
@@ -48,6 +46,7 @@ class McpClientConfig(ModuleConfig):
     model: str = "gpt-4o"
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
+    max_iterations: int = 25
 
 
 class McpClient(Module):
@@ -57,7 +56,7 @@ class McpClient(Module):
     agent_idle: Out[bool]
 
     _lock: RLock
-    _state_graph: CompiledStateGraph[Any, Any, Any, Any] | None
+    _llm: Any | None
     _message_queue: Queue[BaseMessage]
     _tool_registry: dict[str, dict[str, Any]]
     _lane_locks: dict[str, threading.Lock]
@@ -71,7 +70,7 @@ class McpClient(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._state_graph = None
+        self._llm = None
         self._message_queue = Queue()
         self._tool_registry = {}
         self._lane_locks = {}
@@ -134,27 +133,29 @@ class McpClient(Module):
             return
         self._message_queue.put(HumanMessage(content=f"[tool:{tool_name}] {text}"))
 
-    def _fetch_tools(self, timeout: float = 60.0, interval: float = 1.0) -> list[StructuredTool]:
+    def _fetch_tools(self, timeout: float = 60.0, interval: float = 1.0) -> list[dict[str, Any]]:
         result = self._try_fetch_tools(timeout=timeout, interval=interval)
         if result is None:
             raise RuntimeError(
                 f"Failed to fetch tools from MCP server {self.config.mcp_server_url}"
             )
 
-        raw_tools = result.get("tools", [])
+        raw_tools: list[dict[str, Any]] = result.get("tools", [])
         self._tool_registry = {t["name"]: t for t in raw_tools}
         for t in raw_tools:
             if lane := t.get("lane"):
                 self._lane_locks.setdefault(lane, threading.Lock())
-        tools = [self._mcp_tool_to_langchain(t) for t in raw_tools]
 
-        if not tools:
+        if not raw_tools:
             logger.warning("No tools found from MCP server.")
         else:
-            tool_names = [t.name for t in tools]
-            logger.info("Discovered tools from MCP server.", tools=tool_names, n_tools=len(tools))
+            logger.info(
+                "Discovered tools from MCP server.",
+                tools=[t["name"] for t in raw_tools],
+                n_tools=len(raw_tools),
+            )
 
-        return tools
+        return raw_tools
 
     def _try_fetch_tools(self, timeout: float, interval: float) -> dict[str, Any] | None:
         deadline = time.monotonic() + timeout
@@ -177,36 +178,6 @@ class McpClient(Module):
                 return self._mcp_tool_call(name, kwargs)
         return self._mcp_tool_call(name, kwargs)
 
-    def _mcp_tool_to_langchain(self, mcp_tool: dict[str, Any]) -> StructuredTool:
-        name = mcp_tool["name"]
-        description = mcp_tool.get("description", "")
-        input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
-
-        async def call_tool(**kwargs: Any) -> str:
-            result = await asyncio.to_thread(self._invoke_tool, name, kwargs)
-
-            content = result.get("content", [])
-            parts = [c.get("text", "") for c in content if c.get("type") == "text"]
-            text = "\n".join(parts)
-
-            # Images need to be added to the history separately because they
-            # cannot be included in the tool response for OpenAI models and
-            # probably others.
-            for item in content:
-                if item.get("type") != "text":
-                    uuid_ = str(uuid.uuid4())
-                    text += f"Tool call started with UUID: {uuid_}. You will be updated with the result soon."
-                    _append_image_to_history(self, name, uuid_, item)
-
-            return text
-
-        return StructuredTool(
-            name=name,
-            description=description,
-            coroutine=call_tool,
-            args_schema=input_schema,
-        )
-
     @rpc
     def start(self) -> None:
         super().start()
@@ -227,18 +198,29 @@ class McpClient(Module):
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
         tools = self._fetch_tools()
 
-        model: str | Any = self.config.model
+        model: Any = self.config.model
         if self.config.model_fixture is not None:
             from dimos.agents.testing import MockModel
 
             model = MockModel(json_path=self.config.model_fixture)
 
+        if isinstance(model, str):
+            model = init_chat_model(model)
+
+        tool_specs = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": t.get("inputSchema", {"type": "object", "properties": {}}),
+                },
+            }
+            for t in tools
+        ]
+
         with self._lock:
-            self._state_graph = create_agent(
-                model=model,
-                tools=tools,
-                system_prompt=self.config.system_prompt,
-            )
+            self._llm = model.bind_tools(tool_specs)
             if not self._thread.is_alive():
                 self._thread.start()
 
@@ -326,31 +308,70 @@ class McpClient(Module):
                 continue
 
             with self._lock:
-                if not self._state_graph:
-                    raise ValueError("No state graph initialized")
-                self._process_message(self._state_graph, message)
+                self._process_message(message)
 
-    def _process_message(
-        self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
-    ) -> None:
+    def _process_message(self, message: BaseMessage) -> None:
         self.agent_idle.publish(False)
         self._history.append(message)
         pretty_print_langchain_message(message)
         self.agent.publish(message)
 
         async def run() -> None:
-            async for update in state_graph.astream(
-                {"messages": self._history}, stream_mode="updates"
-            ):
-                for node_output in update.values():
-                    for msg in node_output.get("messages", []):
-                        self._history.append(msg)
-                        pretty_print_langchain_message(msg)
-                        self.agent.publish(msg)
+            for _ in range(self.config.max_iterations):
+                context = (
+                    [SystemMessage(content=self.config.system_prompt)] + self._history
+                    if self.config.system_prompt
+                    else self._history
+                )
+                response = self._llm.invoke(context)
+                self._history.append(response)
+                pretty_print_langchain_message(response)
+                self.agent.publish(response)
+
+                tool_calls = getattr(response, "tool_calls", [])
+                if not tool_calls:
+                    break
+
+                tool_results = await asyncio.gather(
+                    *[self._run_tool_call(tc) for tc in tool_calls]
+                )
+                for tool_result in tool_results:
+                    self._history.append(tool_result)
+                    pretty_print_langchain_message(tool_result)
+                    self.agent.publish(tool_result)
+            else:
+                logger.warning(
+                    "Agent reached max_iterations without a final response.",
+                    max_iterations=self.config.max_iterations,
+                )
 
         asyncio.run(run())
         if self._message_queue.empty():
             self.agent_idle.publish(True)
+
+    async def _run_tool_call(self, tool_call: dict[str, Any]) -> ToolMessage:
+        name = tool_call["name"]
+        args = tool_call.get("args", {})
+        call_id = tool_call["id"]
+
+        try:
+            result = await asyncio.to_thread(self._invoke_tool, name, args)
+            content = result.get("content", [])
+            parts = [c.get("text", "") for c in content if c.get("type") == "text"]
+            text = "\n".join(parts)
+
+            # Images need to be added to the history separately because they
+            # cannot be included in the tool response for OpenAI models and
+            # probably others.
+            for item in content:
+                if item.get("type") != "text":
+                    uuid_ = str(uuid.uuid4())
+                    text += f"Tool call started with UUID: {uuid_}. You will be updated with the result soon."
+                    _append_image_to_history(self, name, uuid_, item)
+
+            return ToolMessage(content=text, tool_call_id=call_id)
+        except Exception as e:
+            return ToolMessage(content=f"Error calling {name}: {e}", tool_call_id=call_id)
 
 
 def _append_image_to_history(

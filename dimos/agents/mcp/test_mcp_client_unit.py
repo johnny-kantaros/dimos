@@ -127,17 +127,18 @@ def test_fetch_tools_from_mcp_server(mcp_client: McpClient) -> None:
     tools = mcp_client._fetch_tools()
 
     assert len(tools) == 2
-    assert tools[0].name == "add"
-    assert tools[1].name == "greet"
+    assert tools[0]["name"] == "add"
+    assert tools[1]["name"] == "greet"
 
 
 def test_tool_invocation_via_mcp(mcp_client: McpClient) -> None:
-    tools = mcp_client._fetch_tools()
-    add_tool = next(t for t in tools if t.name == "add")
-    greet_tool = next(t for t in tools if t.name == "greet")
+    mcp_client._fetch_tools()
 
-    assert asyncio.run(add_tool.coroutine(x=2, y=3)) == "5"  # type: ignore[arg-type, misc]
-    assert asyncio.run(greet_tool.coroutine(name="Alice")) == "Hello, Alice!"  # type: ignore[arg-type, misc]
+    add_result = asyncio.run(mcp_client._run_tool_call({"name": "add", "args": {"x": 2, "y": 3}, "id": "c1"}))
+    greet_result = asyncio.run(mcp_client._run_tool_call({"name": "greet", "args": {"name": "Alice"}, "id": "c2"}))
+
+    assert add_result.content == "5"
+    assert greet_result.content == "Hello, Alice!"
 
 
 def test_mcp_request_error_propagation(mcp_client: McpClient) -> None:
@@ -260,25 +261,12 @@ def test_same_lane_tools_execute_serially(mcp_client: McpClient) -> None:
         "b": {"name": "b", "lane": "motion"},
     }
     mcp_client._lane_locks = {"motion": threading.Lock()}
-    tool_a = mcp_client._mcp_tool_to_langchain(
-        {
-            "name": "a",
-            "description": "",
-            "inputSchema": {"type": "object", "properties": {}},
-            "lane": "motion",
-        }
-    )
-    tool_b = mcp_client._mcp_tool_to_langchain(
-        {
-            "name": "b",
-            "description": "",
-            "inputSchema": {"type": "object", "properties": {}},
-            "lane": "motion",
-        }
-    )
 
     async def run() -> None:
-        await asyncio.gather(tool_a.coroutine(), tool_b.coroutine())  # type: ignore[misc]
+        await asyncio.gather(
+            mcp_client._run_tool_call({"name": "a", "args": {}, "id": "c1"}),
+            mcp_client._run_tool_call({"name": "b", "args": {}, "id": "c2"}),
+        )
 
     asyncio.run(run())
 
@@ -303,25 +291,12 @@ def test_different_lane_tools_run_in_parallel(mcp_client: McpClient) -> None:
         "nav": {"name": "nav", "lane": "motion"},
     }
     mcp_client._lane_locks = {"camera": threading.Lock(), "motion": threading.Lock()}
-    tool_cam = mcp_client._mcp_tool_to_langchain(
-        {
-            "name": "cam",
-            "description": "",
-            "inputSchema": {"type": "object", "properties": {}},
-            "lane": "camera",
-        }
-    )
-    tool_nav = mcp_client._mcp_tool_to_langchain(
-        {
-            "name": "nav",
-            "description": "",
-            "inputSchema": {"type": "object", "properties": {}},
-            "lane": "motion",
-        }
-    )
 
     async def run() -> None:
-        await asyncio.gather(tool_cam.coroutine(), tool_nav.coroutine())  # type: ignore[misc]
+        await asyncio.gather(
+            mcp_client._run_tool_call({"name": "cam", "args": {}, "id": "c1"}),
+            mcp_client._run_tool_call({"name": "nav", "args": {}, "id": "c2"}),
+        )
 
     asyncio.run(run())
 
