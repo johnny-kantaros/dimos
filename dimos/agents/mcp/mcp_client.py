@@ -316,14 +316,18 @@ class McpClient(Module):
         pretty_print_langchain_message(message)
         self.agent.publish(message)
 
+        llm = self._llm
+        if llm is None:
+            return
+
         async def run() -> None:
             for _ in range(self.config.max_iterations):
                 context = (
-                    [SystemMessage(content=self.config.system_prompt)] + self._history
+                    [SystemMessage(content=self.config.system_prompt), *self._history]
                     if self.config.system_prompt
                     else self._history
                 )
-                response = self._llm.invoke(context)
+                response = llm.invoke(context)
                 self._history.append(response)
                 pretty_print_langchain_message(response)
                 self.agent.publish(response)
