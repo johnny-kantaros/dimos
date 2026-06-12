@@ -17,12 +17,20 @@ _POLL_INTERVAL = 2.0
 
 def _is_pid_alive(pid: int) -> bool:
     try:
-        os.kill(pid, 0)
-        return True
+        # waitpid with WNOHANG reaps zombies; returns (0,0) if still running
+        result = os.waitpid(pid, os.WNOHANG)
+        return result[0] == 0
+    except ChildProcessError:
+        # fall back to kill(0)
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
     except ProcessLookupError:
         return False
-    except PermissionError:
-        return True  # process exists but we can't signal it
 
 
 def _current_entry() -> dict[str, Any] | None:
