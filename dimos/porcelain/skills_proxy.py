@@ -119,6 +119,12 @@ class SkillsProxy:
                 lines.append(f"    [{cls_name}]")
         return "\n".join(lines)
 
+    def list_skills(self) -> list[SkillInfo]:
+        """Return all discovered skills as a flat list of SkillInfo objects."""
+        self._build_cache()
+        assert self._cache is not None
+        return [info for entries in self._cache.values() for _, _, info in entries]
+
     def __dir__(self) -> list[str]:
         self._build_cache()
         assert self._cache is not None

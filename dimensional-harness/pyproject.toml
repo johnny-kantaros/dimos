@@ -1,0 +1,24 @@
+[project]
+name = "dimensional-harness"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "dimos",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "httpx>=0.27.0",
+    "zeroconf>=0.131.0",
+    "typer>=0.9.0",
+    "anthropic>=0.25.0",
+    "pydantic>=2.0.0",
+]
+
+[project.scripts]
+dimctl = "dimensional_harness.cli:main"
+
+[tool.uv.sources]
+dimos = { path = "../", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

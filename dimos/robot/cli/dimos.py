@@ -44,6 +44,7 @@ from dimos.mapping.utils.cli.rename import main as _map_rename_main
 from dimos.mapping.utils.cli.replay import main as _map_replay_main
 from dimos.mapping.utils.cli.replay_marker import main as _map_replay_marker_main
 from dimos.mapping.utils.cli.summary import main as _map_summary_main
+from dimos.porcelain.dimos import Dimos
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
@@ -389,6 +390,15 @@ def stop(
     typer.echo(f"Stopping {entry.run_id} (PID {entry.pid}) with {sig_name}...")
     msg, _ok = stop_entry(entry, force=force)
     typer.echo(f"  {msg}")
+
+@main.command()
+def chat() -> None:
+    """Chat with the running DimOS instance."""
+    app = Dimos.connect()
+
+
+    skills_proxy = app.skills
+
 
 
 @main.command("log")

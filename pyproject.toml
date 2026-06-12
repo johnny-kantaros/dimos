@@ -604,6 +604,9 @@ exclude_also = [
   'pytest.fail\('
 ]
 
+[tool.uv.workspace]
+members = ["dimensional-gateway"]
+
 [tool.largefiles]
 max_size_kb = 50
 ignore = [

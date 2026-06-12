@@ -60,14 +60,14 @@ class RemoteModuleSource(ModuleSource):
 
     is_remote = True
 
-    def __init__(self, *, timeout: float = 5.0) -> None:
+    def __init__(self, *, timeout: float = 5.0, lcm_url: str | None = None) -> None:
         self._timeout = timeout
         self._cache: dict[str, RPCClient | _RemoteProxy] = {}
         self._descriptors: dict[str, ModuleDescriptor] | None = None
         self._lock = threading.RLock()
 
         try:
-            self._coord = CoordinatorRPC.connect(timeout=timeout)
+            self._coord = CoordinatorRPC.connect(timeout=timeout, lcm_url=lcm_url)
         except TimeoutError:
             raise RuntimeError(
                 "No running DimOS instance. Start one with `dimos run <blueprint>`."

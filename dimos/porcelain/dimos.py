@@ -99,22 +99,22 @@ class Dimos:
             self._coordinator.restart_module(module_class, reload_source=reload_source)
 
     @classmethod
-    def connect(cls, *, timeout: float = 5.0) -> Dimos:
+    def connect(cls, *, timeout: float = 5.0, lcm_url: str | None = None) -> Dimos:
         """Connect to the running DimOS daemon on the current LCM bus.
 
-        One daemon serves the bus identified by `LCM_DEFAULT_URL`. To target
-        a different daemon (e.g. a different host), point `LCM_DEFAULT_URL`
-        at its bus before calling.
+        Pass `lcm_url` to target a specific robot on the network (e.g. from
+        the harness after mDNS discovery). When `lcm_url` is given, the local
+        run-registry check is skipped — the LCM bus itself confirms liveness.
 
         Returns a `Dimos` instance in read/call mode: `skills`, attribute
         access, `__repr__` and `__dir__` work, but only methods marked with
         `@rpc` (and `@skill`, which implies `@rpc`) on a module are callable.
         `stop()` closes the connection without terminating the remote process.
         """
-        if get_most_recent(alive_only=True) is None:
+        if lcm_url is None and get_most_recent(alive_only=True) is None:
             raise RuntimeError("No running DimOS instance. Start one with `dimos run <blueprint>`.")
 
-        source = RemoteModuleSource(timeout=timeout)
+        source = RemoteModuleSource(timeout=timeout, lcm_url=lcm_url)
         instance = cls()
         instance._source = source
         return instance
