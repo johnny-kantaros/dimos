@@ -40,7 +40,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-05T02:17:44.006951Z"
+exclude-newer = "2026-06-05T18:12:19.668214Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1856,17 +1856,13 @@ name = "dimensional-gateway"
 version = "0.1.0"
 source = { editable = "dimensional-gateway" }
 dependencies = [
-    { name = "fastapi" },
     { name = "typer" },
-    { name = "uvicorn", extra = ["standard"] },
     { name = "zeroconf" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "fastapi", specifier = ">=0.110.0" },
     { name = "typer", specifier = ">=0.9.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.29.0" },
     { name = "zeroconf", specifier = ">=0.131.0" },
 ]
 

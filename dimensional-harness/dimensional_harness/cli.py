@@ -30,9 +30,7 @@ def list_robots() -> None:
         typer.echo("No robots found. Is dimensional-gateway running on a robot?")
         return
     for r in robots:
-        bp = r.get("blueprint") or "—"
-        typer.echo(f"  {r['name']}  [{r['status']}]  type={r['robot_type']}  blueprint={bp}")
-        typer.echo(f"    lcm: {r['lcm_url']}  addr: {r['address']}")
+        typer.echo(f"  {r['name']}  type={r['robot_type']}  lcm={r['lcm_url']}")
 
 
 @app.command(name="list-sessions")
@@ -112,31 +110,9 @@ def _handle_slash(msg: str, robot: str, session_id: str) -> str | None:
     cmd = msg.lstrip("/").lower().strip()
 
     if cmd in ("help", "?"):
-        typer.echo(f"  /start <blueprint>  — start DIMOS on {robot}")
-        typer.echo(f"  /stop               — shut down DIMOS on {robot}")
-        typer.echo(f"  /status             — show status of {robot}")
-        typer.echo( "  /switch [robot]     — change active robot")
         typer.echo( "  /robots             — list all robots on the network")
+        typer.echo( "  /switch [robot]     — change active robot")
         typer.echo( "  /help               — show this message")
-        return None
-
-    if cmd.startswith(("stop", "kill")):
-        robots = _get("/robots")
-        gw = next((r.get("gateway_url", "") for r in robots if r["name"] == robot), "")
-        if not gw:
-            typer.echo(f"No gateway URL for {robot!r}. Is dimensional-gateway running?")
-            return None
-        _gateway_post(gw, "/stop", f"{robot}: shutting down.", f"{robot}: failed to stop.")
-        return None
-
-    if cmd == "status":
-        discovered = {r["name"]: r for r in _get("/robots")}
-        r = discovered.get(robot)
-        if r is None:
-            typer.echo(f"  {robot}  [gone from network]")
-        else:
-            bp = r.get("blueprint") or "—"
-            typer.echo(f"  {robot}  [{r['status']}]  blueprint={bp}  lcm={r['lcm_url']}")
         return None
 
     if cmd == "robots":
@@ -160,15 +136,6 @@ def _handle_slash(msg: str, robot: str, session_id: str) -> str | None:
         resp.raise_for_status()
         typer.echo(f"Switched to {new}")
         return new
-
-    if cmd.startswith("start"):
-        parts = cmd.split(maxsplit=1)
-        picked = _pick_blueprint(robot, parts[1] if len(parts) > 1 else "")
-        if picked:
-            blueprint, gw = picked
-            _gateway_post(gw, "/start", f"Starting {blueprint}", f"{robot}: failed to start.", json={"blueprint": blueprint})
-            _wait_for_running(robot, blueprint)
-        return None
 
     typer.echo(f"Unknown command: /{cmd}  (type /help for available commands)")
     return None
@@ -195,20 +162,6 @@ def restart() -> None:
     _restart()
 
 
-def _wait_for_running(robot: str, blueprint: str, timeout: int = 60) -> None:
-    import time
-    typer.echo(f" — waiting for {robot} to come up", nl=False)
-    for _ in range(timeout // 2):
-        time.sleep(2)
-        robots = _get("/robots")
-        r = next((r for r in robots if r["name"] == robot), None)
-        if r and r.get("status") == "running":
-            typer.echo(f"\n  ✓ {robot} running {r.get('blueprint', blueprint)}")
-            return
-        typer.echo(".", nl=False)
-    typer.echo(f"\n  timed out — check /status")
-
-
 def _select_robot(robots: list) -> str | None:  # type: ignore[type-arg]
     if len(robots) == 1:
         return robots[0]["name"]
@@ -223,60 +176,8 @@ def _select_robot(robots: list) -> str | None:  # type: ignore[type-arg]
 def _print_robot_summary(robots: list) -> None:  # type: ignore[type-arg]
     typer.echo("")
     for r in robots:
-        status = r.get("status", "idle")
-        bp = r.get("blueprint") or ""
-        status_label = f"running: {bp}" if status == "running" and bp else status
-        hint = "  → /start to run a blueprint" if status == "idle" else ""
-        typer.echo(f"  ● {r['name']}  [{status_label}]  type={r.get('robot_type', '?')}{hint}")
+        typer.echo(f"  ● {r['name']}  type={r.get('robot_type', '?')}  lcm={r.get('lcm_url', '?')}")
     typer.echo("")
-
-
-def _pick_blueprint(robot_name: str, query: str = "") -> tuple[str, str] | None:
-    """Interactively pick a blueprint. Returns (blueprint_name, gateway_url) or None."""
-    import questionary
-
-    robots = _get("/robots")
-    gateway_url = next((r.get("gateway_url", "") for r in robots if r["name"] == robot_name), "")
-    if not gateway_url:
-        typer.echo(f"Cannot reach gateway for {robot_name!r}.")
-        return None
-
-    all_blueprints: list[str] = _gateway_get(gateway_url, "/blueprints").get("blueprints", [])
-    if not all_blueprints:
-        typer.echo("No blueprints found.")
-        return None
-
-    try:
-        result = questionary.select(
-            f"Blueprint on {robot_name} (type to filter, ↑↓ to navigate):",
-            choices=all_blueprints,
-            default=query if query in all_blueprints else None,
-            use_shortcuts=False,
-        ).ask()
-    except (KeyboardInterrupt, EOFError):
-        return None
-
-    return (result, gateway_url) if result else None
-
-
-def _gateway_get(gateway_url: str, path: str) -> dict:  # type: ignore[type-arg]
-    try:
-        resp = httpx.get(f"{gateway_url}{path}", timeout=5.0)
-        resp.raise_for_status()
-        return resp.json()  # type: ignore[no-any-return]
-    except Exception:
-        return {}
-
-
-def _gateway_post(gateway_url: str, path: str, success_msg: str, fail_msg: str, json: dict | None = None) -> None:
-    try:
-        resp = httpx.post(f"{gateway_url}{path}", json=json, timeout=15.0)
-        resp.raise_for_status()
-        typer.echo(success_msg)
-    except httpx.HTTPStatusError as e:
-        typer.echo(f"{fail_msg} {e.response.json().get('detail', str(e))}")
-    except (httpx.ConnectError, httpx.ReadTimeout):
-        typer.echo(f"{fail_msg} Could not reach gateway at {gateway_url}.")
 
 
 def _get(path: str) -> list:  # type: ignore[type-arg]

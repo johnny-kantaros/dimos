@@ -52,10 +52,6 @@ def list_robots() -> list[dict[str, Any]]:
             "lcm_url": r.lcm_url,
             "robot_type": r.robot_type,
             "version": r.version,
-            "status": r.status,
-            "blueprint": r.blueprint,
-            "address": r.address,
-            "gateway_url": r.gateway_url,
         }
         for r in _registry.list()
     ]

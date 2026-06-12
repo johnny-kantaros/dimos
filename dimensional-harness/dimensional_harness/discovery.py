@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from zeroconf import ServiceBrowser, ServiceInfo, ServiceListener, Zeroconf
+from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
 
 SERVICE_TYPE = "_dimensional._tcp.local."
 
@@ -14,10 +14,6 @@ class RobotInfo:
     lcm_url: str
     robot_type: str
     version: str
-    status: str
-    blueprint: str
-    address: str
-    gateway_url: str = ""
 
 
 class _Listener(ServiceListener):
@@ -35,21 +31,12 @@ class _Listener(ServiceListener):
             return
         props = {k.decode(): (v.decode() if v is not None else "") for k, v in info.properties.items()}
         robot_name = name.removesuffix(f".{type_}")
-        address = info.parsed_addresses()[0] if info.parsed_addresses() else ""
-        http_port = props.get("http_port", "8129")
-        gateway_url = f"http://{address}:{http_port}" if address else ""
-        self._on_add(
-            RobotInfo(
-                name=robot_name,
-                lcm_url=props.get("lcm_url", ""),
-                robot_type=props.get("robot_type", "unknown"),
-                version=props.get("version", ""),
-                status=props.get("status", "idle"),
-                blueprint=props.get("blueprint", ""),
-                address=address,
-                gateway_url=gateway_url,
-            )
-        )
+        self._on_add(RobotInfo(
+            name=robot_name,
+            lcm_url=props.get("lcm_url", ""),
+            robot_type=props.get("robot_type", "unknown"),
+            version=props.get("version", ""),
+        ))
 
     def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
         self.add_service(zc, type_, name)

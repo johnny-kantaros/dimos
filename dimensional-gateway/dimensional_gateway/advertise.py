@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import socket
-from typing import Any
 
 from zeroconf import ServiceInfo, Zeroconf
 
@@ -19,7 +18,7 @@ def _encode_properties(props: dict[str, str]) -> dict[bytes, bytes]:
 
 
 class GatewayAdvertiser:
-    """Registers and maintains a mDNS service entry for this robot."""
+    """Registers a static mDNS beacon so the harness can discover this robot."""
 
     def __init__(self, robot_name: str, lcm_url: str, robot_type: str, version: str, port: int) -> None:
         self._robot_name = robot_name
@@ -29,38 +28,24 @@ class GatewayAdvertiser:
         self._zeroconf: Zeroconf | None = None
         self._info: ServiceInfo | None = None
         self._server: str = socket.gethostname() + ".local."
-        self._addresses: list[bytes] = []
         self._port = port
-
-    def _make_info(self, props: dict[str, str]) -> ServiceInfo:
-        return ServiceInfo(
-            SERVICE_TYPE,
-            f"{self._robot_name}.{SERVICE_TYPE}",
-            addresses=self._addresses,
-            port=self._port,
-            properties=_encode_properties(props),
-            server=self._server,
-        )
 
     def start(self) -> None:
         ip = _local_ip()
-        self._addresses = [socket.inet_aton(ip)]
         self._zeroconf = Zeroconf()
-        self._info = self._make_info(self._base_properties())
+        self._info = ServiceInfo(
+            SERVICE_TYPE,
+            f"{self._robot_name}.{SERVICE_TYPE}",
+            addresses=[socket.inet_aton(ip)],
+            port=self._port,
+            properties=_encode_properties({
+                "lcm_url": self._lcm_url,
+                "robot_type": self._robot_type,
+                "version": self._version,
+            }),
+            server=self._server,
+        )
         self._zeroconf.register_service(self._info)
-
-    def update(self, entry: dict[str, Any] | None) -> None:
-        if self._zeroconf is None or self._info is None:
-            return
-        props = self._base_properties()
-        if entry:
-            props["status"] = "running"
-            props["blueprint"] = entry.get("blueprint", "")
-        else:
-            props["status"] = "idle"
-            props["blueprint"] = ""
-        self._info = self._make_info(props)
-        self._zeroconf.update_service(self._info)
 
     def stop(self) -> None:
         if self._zeroconf is None or self._info is None:
@@ -69,15 +54,3 @@ class GatewayAdvertiser:
         self._zeroconf.close()
         self._zeroconf = None
         self._info = None
-
-    def _base_properties(self) -> dict[str, str]:
-        from dimensional_gateway.server import HTTP_PORT
-        return {
-            "lcm_url": self._lcm_url,
-            "robot_type": self._robot_type,
-            "version": self._version,
-            "status": "idle",
-            "blueprint": "",
-            "capabilities": "",
-            "http_port": str(HTTP_PORT),
-        }
