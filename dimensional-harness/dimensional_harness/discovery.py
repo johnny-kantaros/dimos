@@ -17,6 +17,7 @@ class RobotInfo:
     status: str
     blueprint: str
     address: str
+    gateway_url: str = ""
 
 
 class _Listener(ServiceListener):
@@ -34,6 +35,9 @@ class _Listener(ServiceListener):
             return
         props = {k.decode(): (v.decode() if v is not None else "") for k, v in info.properties.items()}
         robot_name = name.removesuffix(f".{type_}")
+        address = info.parsed_addresses()[0] if info.parsed_addresses() else ""
+        http_port = props.get("http_port", "8129")
+        gateway_url = f"http://{address}:{http_port}" if address else ""
         self._on_add(
             RobotInfo(
                 name=robot_name,
@@ -42,7 +46,8 @@ class _Listener(ServiceListener):
                 version=props.get("version", ""),
                 status=props.get("status", "idle"),
                 blueprint=props.get("blueprint", ""),
-                address=info.parsed_addresses()[0] if info.parsed_addresses() else "",
+                address=address,
+                gateway_url=gateway_url,
             )
         )
 

@@ -15,9 +15,9 @@ class Message:
 
 
 class ChatSession:
-    def __init__(self, session_id: str, robot_name: str) -> None:
+    def __init__(self, session_id: str, active_robot: str) -> None:
         self.session_id = session_id
-        self.robot_name = robot_name
+        self.active_robot = active_robot
         self.history: list[Message] = []
         self._lock = threading.Lock()
 
@@ -35,9 +35,9 @@ class SessionStore:
         self._sessions: dict[str, ChatSession] = {}
         self._lock = threading.RLock()
 
-    def create(self, robot_name: str) -> ChatSession:
+    def create(self, active_robot: str) -> ChatSession:
         session_id = str(uuid.uuid4())
-        session = ChatSession(session_id=session_id, robot_name=robot_name)
+        session = ChatSession(session_id=session_id, active_robot=active_robot)
         with self._lock:
             self._sessions[session_id] = session
         return session

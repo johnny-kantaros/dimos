@@ -391,15 +391,6 @@ def stop(
     msg, _ok = stop_entry(entry, force=force)
     typer.echo(f"  {msg}")
 
-@main.command()
-def chat() -> None:
-    """Chat with the running DimOS instance."""
-    app = Dimos.connect()
-
-
-    skills_proxy = app.skills
-
-
 
 @main.command("log")
 def log_cmd(

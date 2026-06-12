@@ -24,6 +24,16 @@ def install() -> None:
         sys.exit(1)
 
 
+def restart() -> None:
+    if platform.system() == "Darwin":
+        _restart_mac()
+    elif platform.system() == "Linux":
+        _restart_linux()
+    else:
+        print(f"Unsupported platform: {platform.system()}")
+        sys.exit(1)
+
+
 def uninstall() -> None:
     if platform.system() == "Darwin":
         _uninstall_mac()
@@ -84,6 +94,25 @@ def _install_mac(executable: str) -> None:
         print(f"Logs:      {_LOG_PATH}")
         print("dimctl will start on login and restart on crash.")
         print("To stop:   dimctl uninstall")
+
+
+def _restart_mac() -> None:
+    if not _PLIST_PATH.exists():
+        print("Not installed. Run: dimctl install")
+        sys.exit(1)
+    subprocess.run(["launchctl", "stop", _LABEL], capture_output=True)
+    subprocess.run(["launchctl", "start", _LABEL], capture_output=True)
+    print("dimctl daemon restarted.")
+
+
+def _restart_linux() -> None:
+    try:
+        subprocess.run(
+            ["systemctl", "--user", "restart", "dimensional-harness"], check=True
+        )
+        print("dimctl daemon restarted.")
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to restart: {e}")
 
 
 def _uninstall_mac() -> None:

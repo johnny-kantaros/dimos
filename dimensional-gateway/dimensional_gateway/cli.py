@@ -50,9 +50,21 @@ def serve(
         lcm_url=url,
         robot_type=robot_type,
         version=version,
+        port=_assigned_port(),
     )
     advertiser.start()
     typer.echo(f"Advertising {name} at {url}")
+
+    import uvicorn
+    from dimensional_gateway.server import HTTP_PORT, app as gateway_app
+
+    http_thread = threading.Thread(
+        target=uvicorn.run,
+        kwargs={"app": gateway_app, "host": "0.0.0.0", "port": HTTP_PORT, "log_level": "error"},
+        daemon=True,
+    )
+    http_thread.start()
+    typer.echo(f"Gateway API on port {HTTP_PORT}")
 
     stop_event = threading.Event()
 
