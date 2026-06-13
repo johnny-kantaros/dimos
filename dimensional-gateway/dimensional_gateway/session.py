@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import uuid
 from dataclasses import dataclass
 
@@ -33,6 +34,7 @@ class ChatSession:
 class SessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, ChatSession] = {}
+        self._lock = threading.Lock()
 
     def create(self, active_robot: str, connection: Dimos) -> ChatSession:
         session = ChatSession(
@@ -40,21 +42,27 @@ class SessionStore:
             active_robot=active_robot,
             connection=connection,
         )
-        self._sessions[session.session_id] = session
+        with self._lock:
+            self._sessions[session.session_id] = session
         return session
 
     def get(self, session_id: str) -> ChatSession | None:
-        return self._sessions.get(session_id)
+        with self._lock:
+            return self._sessions.get(session_id)
 
     def delete(self, session_id: str) -> None:
-        session = self._sessions.pop(session_id, None)
+        with self._lock:
+            session = self._sessions.pop(session_id, None)
         if session is not None:
             session.connection.stop()
 
     def stop_all(self) -> None:
-        for session in self._sessions.values():
+        with self._lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+        for session in sessions:
             session.connection.stop()
-        self._sessions.clear()
 
     def list_all(self) -> list[ChatSession]:
-        return list(self._sessions.values())
+        with self._lock:
+            return list(self._sessions.values())
