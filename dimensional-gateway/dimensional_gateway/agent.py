@@ -59,13 +59,14 @@ async def _call_tool(session: ChatSession, tc: Any) -> dict:
 
 
 async def run_agent(session: ChatSession) -> AsyncIterator[str]:
+    tools = await asyncio.to_thread(_build_tools, session)
+    module_names = session.connection._source.list_module_names()
+
     history = await session.history()
     messages: list = [
-        build_system_message(session),
+        build_system_message(session, module_names),
         *[{"role": m.role, "content": m.content} for m in history],
     ]
-
-    tools = await asyncio.to_thread(_build_tools, session)
     final_response = ""
 
     for _ in range(_MAX_STEPS):
