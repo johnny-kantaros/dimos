@@ -14,7 +14,7 @@ dependencies = [
     "zeroconf>=0.131.0",
     "typer>=0.9.0",
     "questionary>=2.0.0",
-    "anthropic>=0.40.0",
+    "openai>=1.30.0",
     "dimos @ file:///${PROJECT_ROOT}/../",
 ]
 

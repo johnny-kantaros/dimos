@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from dimensional_gateway.agent import run_agent
 from dimensional_gateway.discovery import Discovery
-from dimensional_gateway.registry import RobotRegistry
+from dimensional_gateway.robot_registry import RobotRegistry
 from dimensional_gateway.session import SessionStore
 from dimos.porcelain.dimos import Dimos
 
@@ -93,7 +93,7 @@ async def chat(session_id: str, body: ChatRequest) -> StreamingResponse:
         raise HTTPException(503, f"Robot {session.active_robot!r} is no longer available")
 
     await session.append("user", body.message)
-    return StreamingResponse(run_agent(session, body.message), media_type="text/event-stream")
+    return StreamingResponse(run_agent(session), media_type="text/event-stream")
 
 
 @app.post("/shutdown")

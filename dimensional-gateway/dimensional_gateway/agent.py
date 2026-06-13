@@ -2,23 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
-import anthropic
+import openai
 
+from dimensional_gateway.prompts import build_system_message
 from dimensional_gateway.session import ChatSession
+from dimensional_gateway.system_tools import SYSTEM_TOOLS
 
-_client = anthropic.AsyncAnthropic()
-_MODEL = "claude-opus-4-8"
+_client = openai.AsyncOpenAI()
+_MODEL = "gpt-4o"
 
-_SYSTEM_PREFIX = (
-    "You are an AI agent controlling a robot. "
-    "Use the provided tools to execute robot skills. "
-    "After calling a skill, always tell the user what happened."
-)
+_MAX_STEPS = 20
 
 
-def _build_tools(session: ChatSession) -> list[dict]:
+def _build_robot_tools(session: ChatSession) -> list[dict]:
     skills = session.skills
     skills._build_cache()
     if not skills._cache:
@@ -29,61 +27,69 @@ def _build_tools(session: ChatSession) -> list[dict]:
         _, _, info = entries[0]
         schema = json.loads(info.args_schema)
         description = schema.get("description") or f"Execute {name} on {session.active_robot}"
-        tools.append({"name": name, "description": description, "input_schema": schema})
+        tools.append({
+            "type": "function",
+            "function": {"name": name, "description": description, "parameters": schema},
+        })
     return tools
 
 
-async def run_agent(session: ChatSession, message: str) -> AsyncIterator[str]:
+def _build_system_tools() -> list[dict]:
+    return [cls.schema() for cls in SYSTEM_TOOLS.values()]
+
+
+def _build_tools(session: ChatSession) -> list[dict]:
+    return _build_robot_tools(session) + _build_system_tools()
+
+
+async def _dispatch_tool(session: ChatSession, name: str, args: dict) -> str:
+    tool_cls = SYSTEM_TOOLS.get(name)
+    if tool_cls is not None:
+        return await tool_cls().run(session, args)
+    return str(await asyncio.to_thread(lambda: getattr(session.skills, name)(**args)))
+
+
+async def _call_tool(session: ChatSession, tc: Any) -> dict:
+    try:
+        args = json.loads(tc.function.arguments)
+        content = await _dispatch_tool(session, tc.function.name, args)
+    except Exception as exc:
+        content = f"Error: {exc}"
+    return {"role": "tool", "tool_call_id": tc.id, "content": content}
+
+
+async def run_agent(session: ChatSession) -> AsyncIterator[str]:
     history = await session.history()
-    messages = [{"role": m.role, "content": m.content} for m in history]
-    system = f"{_SYSTEM_PREFIX}\n\nRobot name: {session.active_robot}"
+    messages: list = [
+        build_system_message(session),
+        *[{"role": m.role, "content": m.content} for m in history],
+    ]
 
     tools = await asyncio.to_thread(_build_tools, session)
+    final_response = ""
 
-    full_reply_parts: list[str] = []
+    for _ in range(_MAX_STEPS):
+        async with _client.chat.completions.stream(
+            model=_MODEL,
+            messages=messages,
+            tools=tools,
+        ) as stream:
+            async for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    final_response += delta.content
+                    yield f"data: {delta.content}\n\n"
+            response = await stream.get_final_completion()
 
-    while True:
-        kwargs: dict = {
-            "model": _MODEL,
-            "max_tokens": 4096,
-            "system": system,
-            "messages": messages,
-        }
-        if tools:
-            kwargs["tools"] = tools
-
-        async with _client.messages.stream(**kwargs) as stream:
-            async for text in stream.text_stream:
-                full_reply_parts.append(text)
-                yield f"data: {text}\n\n"
-            response = await stream.get_final_message()
-
-        if response.stop_reason != "tool_use":
+        choice = response.choices[0]
+        if choice.finish_reason != "tool_calls":
             break
 
-        tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
-        messages.append({"role": "assistant", "content": response.content})
+        messages.append(choice.message.model_dump(exclude_none=True))
+        tool_calls = choice.message.tool_calls or []
+        tool_results = await asyncio.gather(*[_call_tool(session, tc) for tc in tool_calls])
+        messages.extend(tool_results)
 
-        tool_results = []
-        for block in tool_use_blocks:
-            try:
-                result = await asyncio.to_thread(
-                    lambda b=block: getattr(session.skills, b.name)(**b.input)
-                )
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": str(result),
-                })
-            except Exception as exc:
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": f"Error: {exc}",
-                    "is_error": True,
-                })
-
-        messages.append({"role": "user", "content": tool_results})
-
-    await session.append("assistant", "".join(full_reply_parts))
+    if final_response:
+        await session.append("assistant", final_response)
     yield "data: [DONE]\n\n"
