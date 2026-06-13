@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from dimensional_gateway.system_tools.base import SystemTool
@@ -10,7 +11,7 @@ if TYPE_CHECKING:
 
 class PeekStreamTool(SystemTool):
     name = "peek_stream"
-    description = "Read the latest value from a named sensor or data stream on the robot."
+    description = "Read the latest value from a named sensor or data stream on the robot. Returns None if no value arrives within the timeout."
     parameters = {
         "type": "object",
         "properties": {
@@ -21,5 +22,7 @@ class PeekStreamTool(SystemTool):
     }
 
     async def run(self, session: ChatSession, args: dict) -> str:
-        result = session.connection.peek_stream(args["name"], args.get("timeout", 1.0))
+        result = await asyncio.to_thread(
+            session.connection.peek_stream, args["name"], args.get("timeout", 1.0)
+        )
         return str(result)

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import signal
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -26,12 +27,15 @@ class RobotResponse(BaseModel):
     lcm_url: str
     address: str
 
+
 class SessionCreate(BaseModel):
     robot: str
+
 
 class SessionInfo(BaseModel):
     session_id: str
     active_robot: str
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -83,8 +87,42 @@ def delete_session(session_id: str) -> dict[str, str]:
     return {"status": "deleted"}
 
 
+async def _agent_stream(session: object, request: Request) -> AsyncIterator[str]:
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def produce() -> None:
+        try:
+            async for chunk in run_agent(session):  # type: ignore[arg-type]
+                await queue.put(chunk)
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(produce())
+
+    async def cancel_on_disconnect() -> None:
+        while not task.done():
+            if await request.is_disconnected():
+                task.cancel()
+                return
+            await asyncio.sleep(0.3)
+
+    watcher = asyncio.create_task(cancel_on_disconnect())
+
+    try:
+        while True:
+            chunk = await queue.get()
+            if chunk is None:
+                return
+            yield chunk
+    finally:
+        watcher.cancel()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.gather(task, watcher, return_exceptions=True)
+
+
 @app.post("/sessions/{session_id}/chat")
-async def chat(session_id: str, body: ChatRequest) -> StreamingResponse:
+async def chat(session_id: str, body: ChatRequest, request: Request) -> StreamingResponse:
     session = _sessions.get(session_id)
     if session is None:
         raise HTTPException(404, f"Session {session_id!r} not found")
@@ -93,13 +131,14 @@ async def chat(session_id: str, body: ChatRequest) -> StreamingResponse:
         raise HTTPException(503, f"Robot {session.active_robot!r} is no longer available")
 
     await session.append("user", body.message)
-    return StreamingResponse(run_agent(session), media_type="text/event-stream")
+    return StreamingResponse(_agent_stream(session, request), media_type="text/event-stream")
 
 
 @app.post("/shutdown")
 async def shutdown(background_tasks: BackgroundTasks) -> dict[str, str]:
     background_tasks.add_task(os.kill, os.getpid(), signal.SIGTERM)
     return {"status": "stopping"}
+
 
 def _get_connection(lcm_url: str) -> Dimos:
     return Dimos.connect(lcm_url=lcm_url)

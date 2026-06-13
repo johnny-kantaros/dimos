@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import json
+import threading
+import time
+
 import httpx
 import questionary
 import typer
+from prompt_toolkit import prompt as _pt_prompt
+from prompt_toolkit.key_binding import KeyBindings
 
 from dimensional_gateway.install import install as _install_service
 from dimensional_gateway.install import is_installed, restart as _restart_service
@@ -61,6 +67,9 @@ def _create_session(robot: str | None) -> tuple[str, str]:
     if resp.status_code == 404:
         typer.echo(f"Robot {robot!r} not found.")
         raise typer.Exit(1)
+    if resp.status_code == 503:
+        typer.echo(f"Robot {robot!r} is not reachable. Is dimwizard running on the robot?")
+        raise typer.Exit(1)
     resp.raise_for_status()
     data = resp.json()
     return data["session_id"], data["active_robot"]
@@ -85,30 +94,94 @@ def _continue_session(session_id: str, robot: str) -> None:
     typer.echo(f"\nTo resume: dimctl chat --resume {session_id}")
 
 
-def _chat_loop(session_id: str) -> None:
-    while True:
+def _spinner(stop: threading.Event) -> None:
+    frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    i = 0
+    while not stop.is_set():
+        typer.echo(f"\r{frames[i % len(frames)]} thinking...", nl=False)
+        time.sleep(0.08)
+        i += 1
+    typer.echo("\r" + " " * 14 + "\r", nl=False)
+
+
+def _stream_response(session_id: str, msg: str) -> bool:
+    """Stream a chat response. Returns True if interrupted by Ctrl+C."""
+    with httpx.stream(
+        "POST",
+        f"{_DAEMON_URL}/sessions/{session_id}/chat",
+        json={"message": msg},
+        timeout=60.0,
+    ) as r:
+        if r.status_code == 503:
+            typer.echo("Robot is no longer available. The session has been preserved.")
+            return False
+        r.raise_for_status()
+        typer.echo()
+        stop = threading.Event()
+        t = threading.Thread(target=_spinner, args=(stop,), daemon=True)
+        t.start()
         try:
-            msg = input("> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            break
+            for line in r.iter_lines():
+                if line.startswith("data: ") and line != "data: [DONE]":
+                    if not stop.is_set():
+                        stop.set()
+                        t.join()
+                    typer.echo(json.loads(line[6:]), nl=False)
+                    time.sleep(0.04)
+        except KeyboardInterrupt:
+            if not stop.is_set():
+                stop.set()
+                t.join(timeout=0.2)
+            typer.echo()  # move to a clean line
+            return True
+        finally:
+            stop.set()
+    typer.echo("\n")
+    return False
+
+
+def _read_input() -> str | None:
+    """Prompt for input. Returns None when Ctrl+C is pressed on an empty line (exit signal).
+    Ctrl+C with text on the line clears the text and keeps the prompt open."""
+    kb = KeyBindings()
+
+    @kb.add("c-c")
+    def _(event):
+        if event.current_buffer.text:
+            event.current_buffer.reset()
+        else:
+            raise KeyboardInterrupt()
+
+    try:
+        return _pt_prompt("> ", key_bindings=kb)
+    except (KeyboardInterrupt, EOFError):
+        return None
+
+
+def _chat_loop(session_id: str) -> None:
+    ctrl_c_count = 0
+
+    while True:
+        typer.echo()
+        msg = _read_input()
+
+        if msg is None:
+            ctrl_c_count += 1
+            if ctrl_c_count >= 2:
+                break
+            typer.echo("(Ctrl+C again to exit, or type 'exit')")
+            continue
+
+        msg = msg.strip()
         if msg.lower() in ("exit", "quit"):
             break
         if not msg:
             continue
-        with httpx.stream(
-            "POST",
-            f"{_DAEMON_URL}/sessions/{session_id}/chat",
-            json={"message": msg},
-            timeout=60.0,
-        ) as r:
-            if r.status_code == 503:
-                typer.echo("Robot is no longer available. The session has been preserved.")
-                break
-            r.raise_for_status()
-            for line in r.iter_lines():
-                if line.startswith("data: ") and line != "data: [DONE]":
-                    typer.echo(line[6:])
-        typer.echo()
+
+        ctrl_c_count = 0
+        if _stream_response(session_id, msg):
+            ctrl_c_count += 1
+            typer.echo("[Interrupted]")
 
 
 @app.command()

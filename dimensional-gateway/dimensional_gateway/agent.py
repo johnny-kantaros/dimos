@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, AsyncIterator
+from typing import AsyncIterator
 
 import openai
 
@@ -16,30 +16,35 @@ _MODEL = "gpt-4o"
 _MAX_STEPS = 20
 
 
-def _build_robot_tools(session: ChatSession) -> list[dict]:
-    skills = session.skills
-    skills._build_cache()
-    if not skills._cache:
-        return []
-
-    tools = []
-    for name, entries in skills._cache.items():
-        _, _, info = entries[0]
-        schema = json.loads(info.args_schema)
-        description = schema.get("description") or f"Execute {name} on {session.active_robot}"
-        tools.append({
-            "type": "function",
-            "function": {"name": name, "description": description, "parameters": schema},
-        })
-    return tools
-
-
 def _build_system_tools() -> list[dict]:
     return [cls.schema() for cls in SYSTEM_TOOLS.values()]
 
 
-def _build_tools(session: ChatSession) -> list[dict]:
-    return _build_robot_tools(session) + _build_system_tools()
+def _fetch_robot_context(session: ChatSession) -> tuple[list[dict], list[str]]:
+    """Return (tools, module_names) from a single _build_cache() call.
+
+    Avoids a redundant coordinator RPC and keeps module_names consistent with
+    the tool list. Must run in a thread as _build_cache() blocks on LCM RPC.
+    """
+    skills = session.skills
+    robot_tools: list[dict] = []
+    module_names: list[str] = []
+
+    try:
+        skills._build_cache()
+        module_names = list(skills._cache_key or [])
+        for name, entries in (skills._cache or {}).items():
+            _, _, info = entries[0]
+            schema = json.loads(info.args_schema)
+            description = schema.get("description") or f"Execute {name} on {session.active_robot}"
+            robot_tools.append({
+                "type": "function",
+                "function": {"name": name, "description": description, "parameters": schema},
+            })
+    except Exception:
+        pass
+
+    return robot_tools + _build_system_tools(), module_names
 
 
 async def _dispatch_tool(session: ChatSession, name: str, args: dict) -> str:
@@ -49,18 +54,17 @@ async def _dispatch_tool(session: ChatSession, name: str, args: dict) -> str:
     return str(await asyncio.to_thread(lambda: getattr(session.skills, name)(**args)))
 
 
-async def _call_tool(session: ChatSession, tc: Any) -> dict:
+async def _call_tool(session: ChatSession, tc_id: str, name: str, arguments: str) -> dict:
     try:
-        args = json.loads(tc.function.arguments)
-        content = await _dispatch_tool(session, tc.function.name, args)
+        args = json.loads(arguments)
+        content = await _dispatch_tool(session, name, args)
     except Exception as exc:
         content = f"Error: {exc}"
-    return {"role": "tool", "tool_call_id": tc.id, "content": content}
+    return {"role": "tool", "tool_call_id": tc_id, "content": content}
 
 
 async def run_agent(session: ChatSession) -> AsyncIterator[str]:
-    tools = await asyncio.to_thread(_build_tools, session)
-    module_names = session.connection._source.list_module_names()
+    tools, module_names = await asyncio.to_thread(_fetch_robot_context, session)
 
     history = await session.history()
     messages: list = [
@@ -70,25 +74,49 @@ async def run_agent(session: ChatSession) -> AsyncIterator[str]:
     final_response = ""
 
     for _ in range(_MAX_STEPS):
-        async with _client.chat.completions.stream(
+        finish_reason = None
+        tool_calls_acc: dict[int, dict] = {}
+
+        stream = await _client.chat.completions.create(
             model=_MODEL,
             messages=messages,
             tools=tools,
-        ) as stream:
-            async for chunk in stream:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    final_response += delta.content
-                    yield f"data: {delta.content}\n\n"
-            response = await stream.get_final_completion()
+            stream=True,
+        )
 
-        choice = response.choices[0]
-        if choice.finish_reason != "tool_calls":
+        async for chunk in stream:
+            choice = chunk.choices[0]
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+
+            delta = choice.delta
+            if delta.content:
+                final_response += delta.content
+                yield f"data: {json.dumps(delta.content)}\n\n"
+
+            for tc in delta.tool_calls or []:
+                if tc.index not in tool_calls_acc:
+                    tool_calls_acc[tc.index] = {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name or "", "arguments": ""},
+                    }
+                if tc.function.arguments:
+                    tool_calls_acc[tc.index]["function"]["arguments"] += tc.function.arguments
+
+        if finish_reason != "tool_calls":
             break
 
-        messages.append(choice.message.model_dump(exclude_none=True))
-        tool_calls = choice.message.tool_calls or []
-        tool_results = await asyncio.gather(*[_call_tool(session, tc) for tc in tool_calls])
+        tool_calls = list(tool_calls_acc.values())
+        messages.append({
+            "role": "assistant",
+            "content": final_response or None,
+            "tool_calls": tool_calls,
+        })
+        tool_results = await asyncio.gather(*[
+            _call_tool(session, tc["id"], tc["function"]["name"], tc["function"]["arguments"])
+            for tc in tool_calls
+        ])
         messages.extend(tool_results)
 
     if final_response:
