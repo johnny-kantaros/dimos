@@ -79,7 +79,7 @@ def _create_session(robot: str | None) -> tuple[str, str]:
 
 
 def _continue_session(session_id: str, robot: str) -> None:
-    typer.echo(f"Connected to {robot}. Type 'exit' to quit.\n")
+    typer.echo(f"Connected to {robot}. Type 'exit' to detach.\n")
     _chat_loop(session_id)
     typer.echo(f"\nTo resume: dimctl chat --resume {session_id}")
 

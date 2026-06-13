@@ -14,6 +14,7 @@ dependencies = [
     "zeroconf>=0.131.0",
     "typer>=0.9.0",
     "questionary>=2.0.0",
+    "dimos @ file:///${PROJECT_ROOT}/../",
 ]
 
 [project.scripts]

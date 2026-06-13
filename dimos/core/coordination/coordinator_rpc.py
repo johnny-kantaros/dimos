@@ -43,9 +43,9 @@ class CoordinatorRPC:
         return cls(rpc)
 
     @classmethod
-    def connect(cls, *, timeout: float) -> CoordinatorRPC:
+    def connect(cls, *, timeout: float, lcm_url: str | None = None) -> CoordinatorRPC:
         """Attach to a running Coordinator, raising `TimeoutError` if none answers."""
-        rpc = LCMRPC()
+        rpc = LCMRPC(url=lcm_url) if lcm_url else LCMRPC()
         rpc.start()
         client = cls(rpc)
         try:
