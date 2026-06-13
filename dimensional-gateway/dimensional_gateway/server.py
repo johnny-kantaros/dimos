@@ -10,9 +10,10 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from dimensional_gateway.agent import run_agent
 from dimensional_gateway.discovery import Discovery
 from dimensional_gateway.registry import RobotRegistry
-from dimensional_gateway.session import ChatSession, SessionStore
+from dimensional_gateway.session import SessionStore
 from dimos.porcelain.dimos import Dimos
 
 _registry = RobotRegistry()
@@ -92,14 +93,7 @@ async def chat(session_id: str, body: ChatRequest) -> StreamingResponse:
         raise HTTPException(503, f"Robot {session.active_robot!r} is no longer available")
 
     await session.append("user", body.message)
-    return StreamingResponse(_stub_response(session, body.message), media_type="text/event-stream")
-
-
-async def _stub_response(session: ChatSession, message: str) -> AsyncIterator[str]:
-    reply = f"[stub] {session.active_robot} received: {message!r}"
-    yield f"data: {reply}\n\n"
-    yield "data: [DONE]\n\n"
-    await session.append("assistant", reply)
+    return StreamingResponse(run_agent(session, body.message), media_type="text/event-stream")
 
 
 @app.post("/shutdown")

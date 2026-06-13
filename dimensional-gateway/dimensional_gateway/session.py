@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass
 
 from dimos.porcelain.dimos import Dimos
+from dimos.porcelain.skills_proxy import SkillsProxy
 
 
 @dataclass
@@ -19,6 +20,7 @@ class ChatSession:
         self.session_id = session_id
         self.active_robot = active_robot
         self.connection = connection
+        self.skills: SkillsProxy = connection.skills
         self._history: list[Message] = []
         self._lock = asyncio.Lock()
 
