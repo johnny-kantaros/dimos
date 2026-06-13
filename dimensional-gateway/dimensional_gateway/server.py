@@ -6,7 +6,7 @@ import signal
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -103,8 +103,8 @@ async def _stub_response(session: ChatSession, message: str) -> AsyncIterator[st
 
 
 @app.post("/shutdown")
-def shutdown() -> dict[str, str]:
-    os.kill(os.getpid(), signal.SIGTERM)
+async def shutdown(background_tasks: BackgroundTasks) -> dict[str, str]:
+    background_tasks.add_task(os.kill, os.getpid(), signal.SIGTERM)
     return {"status": "stopping"}
 
 def _get_connection(lcm_url: str) -> Dimos:

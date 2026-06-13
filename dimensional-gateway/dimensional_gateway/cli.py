@@ -54,28 +54,29 @@ def chat(
 
 
 def _create_session(robot: str | None) -> tuple[str, str]:
-    robots = _get("/robots")
-    if not robots:
-        typer.echo("No robots found on the network.")
-        raise typer.Exit(1)
-
     if robot is None:
-        if len(robots) == 1:
-            robot = robots[0]["name"]
-        else:
-            robot = questionary.select(
-                "Select robot:",
-                choices=[r["name"] for r in robots],
-            ).ask()
-            if robot is None:
-                raise typer.Exit(0)
+        robot = _select_robot()
 
     resp = httpx.post(f"{_DAEMON_URL}/sessions", json={"robot": robot}, timeout=10.0)
     if resp.status_code == 404:
         typer.echo(f"Robot {robot!r} not found.")
         raise typer.Exit(1)
     resp.raise_for_status()
-    return resp.json()["session_id"], robot
+    data = resp.json()
+    return data["session_id"], data["active_robot"]
+
+
+def _select_robot() -> str:
+    robots = _get("/robots")
+    if not robots:
+        typer.echo("No robots found on the network.")
+        raise typer.Exit(1)
+    if len(robots) == 1:
+        return robots[0]["name"]
+    robot = questionary.select("Select robot:", choices=[r["name"] for r in robots]).ask()
+    if robot is None:
+        raise typer.Exit(0)
+    return robot
 
 
 def _continue_session(session_id: str, robot: str) -> None:
@@ -136,10 +137,6 @@ def install() -> None:
 @app.command()
 def uninstall() -> None:
     """Stop the daemon and remove the login service."""
-    try:
-        httpx.post(f"{_DAEMON_URL}/shutdown", timeout=3.0)
-    except httpx.ConnectError:
-        pass
     _uninstall_service()
 
 
