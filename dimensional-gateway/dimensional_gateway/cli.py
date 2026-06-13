@@ -110,7 +110,7 @@ def _stream_response(session_id: str, msg: str) -> bool:
         "POST",
         f"{_DAEMON_URL}/sessions/{session_id}/chat",
         json={"message": msg},
-        timeout=60.0,
+        timeout=1000,
     ) as r:
         if r.status_code == 503:
             typer.echo("Robot is no longer available. The session has been preserved.")

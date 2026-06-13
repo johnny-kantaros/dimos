@@ -21,30 +21,33 @@ def _build_system_tools() -> list[dict]:
 
 
 def _fetch_robot_context(session: ChatSession) -> tuple[list[dict], list[str]]:
-    """Return (tools, module_names) from a single _build_cache() call.
+    """Bypasses SkillsProxy._build_cache() to skip stopped modules before get_skills() is called."""
 
-    Avoids a redundant coordinator RPC and keeps module_names consistent with
-    the tool list. Must run in a thread as _build_cache() blocks on LCM RPC.
-    """
-    skills = session.skills
+    source = session.connection._source
+    stopped = session.robot.stopped_modules
     robot_tools: list[dict] = []
-    module_names: list[str] = []
+    active_names: list[str] = []
 
     try:
-        skills._build_cache()
-        module_names = list(skills._cache_key or [])
-        for name, entries in (skills._cache or {}).items():
-            _, _, info = entries[0]
-            schema = json.loads(info.args_schema)
-            description = schema.get("description") or f"Execute {name} on {session.active_robot}"
-            robot_tools.append({
-                "type": "function",
-                "function": {"name": name, "description": description, "parameters": schema},
-            })
+        for name in source.list_module_names():
+            if name in stopped:
+                continue
+            try:
+                proxy = source.get_module(name)
+                for info in proxy.get_skills():
+                    schema = json.loads(info.args_schema)
+                    description = schema.get("description") or f"Execute {info.func_name} on {session.active_robot}"
+                    robot_tools.append({
+                        "type": "function",
+                        "function": {"name": info.func_name, "description": description, "parameters": schema},
+                    })
+                active_names.append(name)
+            except Exception:
+                pass
     except Exception:
         pass
 
-    return robot_tools + _build_system_tools(), module_names
+    return robot_tools, active_names
 
 
 async def _dispatch_tool(session: ChatSession, name: str, args: dict) -> str:
@@ -64,7 +67,8 @@ async def _call_tool(session: ChatSession, tc_id: str, name: str, arguments: str
 
 
 async def run_agent(session: ChatSession) -> AsyncIterator[str]:
-    tools, module_names = await asyncio.to_thread(_fetch_robot_context, session)
+    robot_tools, module_names = await asyncio.to_thread(_fetch_robot_context, session)
+    tools = robot_tools + _build_system_tools()
 
     history = await session.history()
     messages: list = [

@@ -4,9 +4,12 @@ import asyncio
 import threading
 import uuid
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.skills_proxy import SkillsProxy
+
+if TYPE_CHECKING:
+    from dimensional_gateway.robot_registry import Robot
 
 
 @dataclass
@@ -16,13 +19,24 @@ class Message:
 
 
 class ChatSession:
-    def __init__(self, session_id: str, active_robot: str, connection: Dimos) -> None:
+    def __init__(self, session_id: str, robot: Robot) -> None:
         self.session_id = session_id
-        self.active_robot = active_robot
-        self.connection = connection
-        self.skills: SkillsProxy = connection.skills
+        self.robot = robot
+        self._skills = SkillsProxy(robot.connection._source)
         self._history: list[Message] = []
         self._lock = asyncio.Lock()
+
+    @property
+    def active_robot(self) -> str:
+        return self.robot.info.name
+
+    @property
+    def connection(self):  # type: ignore[return]
+        return self.robot.connection
+
+    @property
+    def skills(self) -> SkillsProxy:
+        return self._skills
 
     async def append(self, role: str, content: str) -> None:
         async with self._lock:
@@ -38,12 +52,8 @@ class SessionStore:
         self._sessions: dict[str, ChatSession] = {}
         self._lock = threading.Lock()
 
-    def create(self, active_robot: str, connection: Dimos) -> ChatSession:
-        session = ChatSession(
-            session_id=str(uuid.uuid4()),
-            active_robot=active_robot,
-            connection=connection,
-        )
+    def create(self, robot: Robot) -> ChatSession:
+        session = ChatSession(session_id=str(uuid.uuid4()), robot=robot)
         with self._lock:
             self._sessions[session.session_id] = session
         return session
@@ -54,16 +64,7 @@ class SessionStore:
 
     def delete(self, session_id: str) -> None:
         with self._lock:
-            session = self._sessions.pop(session_id, None)
-        if session is not None:
-            session.connection.stop()
-
-    def stop_all(self) -> None:
-        with self._lock:
-            sessions = list(self._sessions.values())
-            self._sessions.clear()
-        for session in sessions:
-            session.connection.stop()
+            self._sessions.pop(session_id, None)
 
     def list_all(self) -> list[ChatSession]:
         with self._lock:

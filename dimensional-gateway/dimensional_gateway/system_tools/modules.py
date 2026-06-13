@@ -35,23 +35,6 @@ class AddModuleTool(SystemTool):
         return f"Module '{args['name']}' added."
 
 
-class StartModuleTool(SystemTool):
-    name = "start_module"
-    description = "Start a module's main loop and stream handlers."
-    parameters = {
-        "type": "object",
-        "properties": {
-            "module_name": {"type": "string", "description": "Module class name (e.g. 'DemoSensors')"},
-        },
-        "required": ["module_name"],
-    }
-
-    async def run(self, session: ChatSession, args: dict) -> str:
-        module = session.connection._source.get_module(args["module_name"])
-        await asyncio.to_thread(module.start)
-        return f"Module '{args['module_name']}' started."
-
-
 class StopModuleTool(SystemTool):
     name = "stop_module"
     description = "Stop a module's main loop and close its RPC. The module remains registered and can be restarted."
@@ -64,14 +47,16 @@ class StopModuleTool(SystemTool):
     }
 
     async def run(self, session: ChatSession, args: dict) -> str:
-        module = session.connection._source.get_module(args["module_name"])
+        module_name = args["module_name"]
+        module = session.connection._source.get_module(module_name)
         await asyncio.to_thread(module.stop)
-        return f"Module '{args['module_name']}' stopped."
+        session.robot.stopped_modules.add(module_name)
+        return f"Module '{module_name}' stopped."
 
 
 class RestartModuleTool(SystemTool):
     name = "restart_module"
-    description = "Restart a module in place, optionally reloading its source code. Reconnects streams and re-injects module refs."
+    description = "Start or restart a module. Use this to bring a stopped module back online or to reload a running one."
     parameters = {
         "type": "object",
         "properties": {
@@ -82,9 +67,11 @@ class RestartModuleTool(SystemTool):
     }
 
     async def run(self, session: ChatSession, args: dict) -> str:
+        module_name = args["module_name"]
         await asyncio.to_thread(
             session.connection._source.restart_module_by_class_name,
-            args["module_name"],
+            module_name,
             reload_source=args.get("reload_source", True),
         )
-        return f"Module '{args['module_name']}' restarted."
+        session.robot.stopped_modules.discard(module_name)
+        return f"Module '{module_name}' restarted."

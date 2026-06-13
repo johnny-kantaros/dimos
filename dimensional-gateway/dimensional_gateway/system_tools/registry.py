@@ -5,7 +5,6 @@ from dimensional_gateway.system_tools.modules import (
     AddModuleTool,
     ListModulesTool,
     RestartModuleTool,
-    StartModuleTool,
     StopModuleTool,
 )
 from dimensional_gateway.system_tools.peek_stream import PeekStreamTool
@@ -15,7 +14,6 @@ SYSTEM_TOOLS: dict[str, type[SystemTool]] = {
     for cls in [
         ListModulesTool,
         AddModuleTool,
-        StartModuleTool,
         StopModuleTool,
         RestartModuleTool,
         PeekStreamTool,

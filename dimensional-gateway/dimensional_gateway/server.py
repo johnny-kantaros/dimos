@@ -15,7 +15,6 @@ from dimensional_gateway.agent import run_agent
 from dimensional_gateway.discovery import Discovery
 from dimensional_gateway.robot_registry import RobotRegistry
 from dimensional_gateway.session import SessionStore
-from dimos.porcelain.dimos import Dimos
 
 _registry = RobotRegistry()
 _sessions = SessionStore()
@@ -48,7 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # type: ignore[type-ar
     yield
     if _discovery:
         _discovery.close()
-    await asyncio.to_thread(_sessions.stop_all)
+    await asyncio.to_thread(_registry.stop_all_connections)
 
 
 app = FastAPI(title="Dimensional Gateway", version="0.1.0", lifespan=lifespan)
@@ -64,13 +63,11 @@ async def create_session(body: SessionCreate) -> SessionInfo:
     robot = _registry.get(body.robot)
     if robot is None:
         raise HTTPException(404, f"Robot {body.robot!r} not found")
-
     try:
-        connection = await asyncio.to_thread(_get_connection, robot.lcm_url)
+        await asyncio.to_thread(_registry.get_connection, body.robot)
     except RuntimeError:
         raise HTTPException(503, f"Robot {body.robot!r} is not reachable")
-
-    session = _sessions.create(active_robot=body.robot, connection=connection)
+    session = _sessions.create(robot=robot)
     return SessionInfo(session_id=session.session_id, active_robot=session.active_robot)
 
 
@@ -126,10 +123,8 @@ async def chat(session_id: str, body: ChatRequest, request: Request) -> Streamin
     session = _sessions.get(session_id)
     if session is None:
         raise HTTPException(404, f"Session {session_id!r} not found")
-
     if _registry.get(session.active_robot) is None:
         raise HTTPException(503, f"Robot {session.active_robot!r} is no longer available")
-
     await session.append("user", body.message)
     return StreamingResponse(_agent_stream(session, request), media_type="text/event-stream")
 
@@ -138,7 +133,3 @@ async def chat(session_id: str, body: ChatRequest, request: Request) -> Streamin
 async def shutdown(background_tasks: BackgroundTasks) -> dict[str, str]:
     background_tasks.add_task(os.kill, os.getpid(), signal.SIGTERM)
     return {"status": "stopping"}
-
-
-def _get_connection(lcm_url: str) -> Dimos:
-    return Dimos.connect(lcm_url=lcm_url)
