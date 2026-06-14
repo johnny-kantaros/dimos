@@ -1,0 +1,5 @@
+description: Stop a running module by name.
+steps:
+  - Call list_modules to see what is currently running.
+  - Identify the exact class name of the module the user wants to stop.
+  - Call stop_module with that class name.

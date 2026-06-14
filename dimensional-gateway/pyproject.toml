@@ -16,6 +16,7 @@ dependencies = [
     "questionary>=2.0.0",
     "openai>=1.30.0",
     "python-telegram-bot>=20.0",
+    "pyyaml>=6.0",
     "dimos @ file:///${PROJECT_ROOT}/../",
 ]
 

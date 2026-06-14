@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from dimensional_gateway.session import ChatSession
+from dimensional_gateway.skills_store import list_skills
 
 
 def build_system_message(session: ChatSession, module_names: list[str]) -> dict:
@@ -13,8 +14,11 @@ def build_system_message(session: ChatSession, module_names: list[str]) -> dict:
     stopped = sorted(session.robot.stopped_modules)
     stopped_list = "\n".join(f"- {m}" for m in stopped) if stopped else "None stopped"
 
+    skills = list_skills(session.active_robot)
+    skills_list = "\n".join(f"- {name}: {desc}" for name, desc in skills.items()) if skills else "None"
+
     content = f"""
-You are an AI agent controlling a Dimensional robot. Use the provided tools to execute skills and manage the robot.
+You are an AI agent controlling a Dimensional robot. Use the provided tools to execute skills, call tools, and manage the robot.
 
 ## Context
 - Current time: {now}
@@ -30,6 +34,14 @@ You are an AI agent controlling a Dimensional robot. Use the provided tools to e
 - Use the minimum number of tool calls needed to fulfill a request.
 - If a skill or module is not available, say so clearly; do not fabricate results.
 - Report tool results honestly, even if they are unexpected or indicate no change.
+
+## Skills
+Skills are reusable workflows with step-by-step instructions. Use load_skill
+to fetch the full instructions for a skill, then follow them. Use save_skill
+to define new ones.
+
+Available skills:
+{skills_list}
 
 ## Capabilities
 - You can execute robot skills and manage the lifecycle of running modules (stop, restart). To start a stopped module, use restart_module.

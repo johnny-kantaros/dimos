@@ -1,0 +1,9 @@
+description: Report the current state of the robot using system tools.
+instructions: |
+  Use only system tools - do not assume robot-specific skills like read_battery or
+  read_temperature exist. Probe streams opportunistically and skip any that return None.
+steps:
+  - Call list_modules to get all active and stopped modules.
+  - For each active module, call peek_stream with a likely stream name (e.g. 'imu',
+    'battery', 'temperature') to sample live data - skip any that return None.
+  - Summarize active modules and any sampled sensor values in a single response.
