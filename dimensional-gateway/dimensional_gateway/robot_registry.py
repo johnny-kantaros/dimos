@@ -56,6 +56,7 @@ class RobotRegistry:
                 rpc_timeouts = conn._source._coord.rpc.rpc_timeouts
                 rpc_timeouts["list_modules"] = 5.0
                 rpc_timeouts["get_skills"] = 5.0
+                rpc_timeouts["stop"] = 10.0
                 rpc_timeouts["restart_module_by_class_name"] = 60.0
                 robot.connection = conn
             return robot.connection

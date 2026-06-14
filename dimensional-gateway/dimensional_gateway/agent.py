@@ -57,7 +57,7 @@ async def _call_tool(session: ChatSession, tc_id: str, name: str, arguments: str
 
 
 async def run_agent(session: ChatSession) -> AsyncIterator[str]:
-    robot_tools, module_names = await asyncio.to_thread(_fetch_robot_context, session)
+    robot_tools, module_names = _fetch_robot_context(session)
     tools = robot_tools + _build_system_tools()
 
     history = await session.history()
@@ -70,6 +70,7 @@ async def run_agent(session: ChatSession) -> AsyncIterator[str]:
     for _ in range(_MAX_STEPS):
         finish_reason = None
         tool_calls_acc: dict[int, dict] = {}
+        step_text = ""
 
         stream = await _client.chat.completions.create(
             model=_MODEL,
@@ -85,6 +86,7 @@ async def run_agent(session: ChatSession) -> AsyncIterator[str]:
 
             delta = choice.delta
             if delta.content:
+                step_text += delta.content
                 final_response += delta.content
                 yield f"data: {json.dumps(delta.content)}\n\n"
 
@@ -104,7 +106,7 @@ async def run_agent(session: ChatSession) -> AsyncIterator[str]:
         tool_calls = list(tool_calls_acc.values())
         messages.append({
             "role": "assistant",
-            "content": final_response or None,
+            "content": step_text or None,
             "tool_calls": tool_calls,
         })
         tool_results = await asyncio.gather(*[

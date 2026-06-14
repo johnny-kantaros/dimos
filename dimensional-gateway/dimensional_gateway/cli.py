@@ -63,7 +63,7 @@ def _create_session(robot: str | None) -> tuple[str, str]:
     if robot is None:
         robot = _select_robot()
 
-    resp = httpx.post(f"{_DAEMON_URL}/sessions", json={"robot": robot}, timeout=10.0)
+    resp = httpx.post(f"{_DAEMON_URL}/sessions", json={"robot": robot}, timeout=60.0)
     if resp.status_code == 404:
         typer.echo(f"Robot {robot!r} not found.")
         raise typer.Exit(1)

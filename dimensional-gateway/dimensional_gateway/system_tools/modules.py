@@ -32,6 +32,7 @@ class AddModuleTool(SystemTool):
 
     async def run(self, session: ChatSession, args: dict) -> str:
         await asyncio.to_thread(session.connection.run, args["name"])
+        await asyncio.to_thread(session.skills._build_cache)
         return f"Module '{args['name']}' added."
 
 

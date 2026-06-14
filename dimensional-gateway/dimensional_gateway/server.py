@@ -65,10 +65,14 @@ async def create_session(body: SessionCreate) -> SessionInfo:
         raise HTTPException(404, f"Robot {body.robot!r} not found")
     try:
         await asyncio.to_thread(_registry.get_connection, body.robot)
-    except RuntimeError:
+    except (RuntimeError, KeyError):
         raise HTTPException(503, f"Robot {body.robot!r} is not reachable")
     session = _sessions.create(robot=robot)
-    await asyncio.to_thread(session.skills._build_cache)
+    try:
+        await asyncio.to_thread(session.skills._build_cache)
+    except Exception:
+        _sessions.delete(session.session_id)
+        raise HTTPException(503, f"Robot {body.robot!r} skills unavailable")
     return SessionInfo(session_id=session.session_id, active_robot=session.active_robot)
 
 

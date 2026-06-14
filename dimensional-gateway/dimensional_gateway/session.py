@@ -6,6 +6,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.skills_proxy import SkillsProxy
 
 if TYPE_CHECKING:
