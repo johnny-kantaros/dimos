@@ -8,6 +8,8 @@ from dimensional_gateway.system_tools.base import SystemTool
 if TYPE_CHECKING:
     from dimensional_gateway.session import ChatSession
 
+_background_tasks: set[asyncio.Task] = set()
+
 
 class ListModulesTool(SystemTool):
     name = "list_modules"
@@ -82,5 +84,7 @@ class RestartModuleTool(SystemTool):
             except Exception:
                 pass
 
-        asyncio.create_task(_restart())
+        task = asyncio.create_task(_restart())
+        task.add_done_callback(_background_tasks.discard)
+        _background_tasks.add(task)
         return f"Restarting '{module_name}' in the background — it will appear in active modules once ready."

@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 class PeekStreamTool(SystemTool):
     name = "peek_stream"
-    description = "Read the latest value from a named sensor or data stream on the robot. Returns None if no value arrives within the timeout."
+    description = "Read the latest value from a named sensor or data stream on the robot (e.g. 'imu', 'temperature'). Returns None if no value arrives within the timeout. Not suitable for image or binary streams."
     parameters = {
         "type": "object",
         "properties": {

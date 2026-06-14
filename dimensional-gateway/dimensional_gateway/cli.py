@@ -5,14 +5,17 @@ import threading
 import time
 
 import httpx
-import questionary
-import typer
 from prompt_toolkit import prompt as _pt_prompt
 from prompt_toolkit.key_binding import KeyBindings
+import questionary
+import typer
 
-from dimensional_gateway.install import install as _install_service
-from dimensional_gateway.install import is_installed, restart as _restart_service
-from dimensional_gateway.install import uninstall as _uninstall_service
+from dimensional_gateway.install import (
+    install as _install_service,
+    is_installed,
+    restart as _restart_service,
+    uninstall as _uninstall_service,
+)
 
 app = typer.Typer(help="dimctl — Dimensional robot control plane")
 

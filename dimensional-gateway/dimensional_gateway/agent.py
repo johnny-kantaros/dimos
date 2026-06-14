@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 import json
-from typing import AsyncIterator
 
 import openai
 

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 import contextlib
+from contextlib import asynccontextmanager
 import os
 import signal
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse

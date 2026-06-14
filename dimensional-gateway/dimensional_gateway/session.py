@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import threading
-import uuid
 from dataclasses import dataclass
+import threading
 from typing import TYPE_CHECKING
+import uuid
 
-from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.skills_proxy import SkillsProxy
 
 if TYPE_CHECKING:

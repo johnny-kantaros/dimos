@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, field
+import threading
 
 from dimensional_gateway.discovery import RobotInfo
 from dimos.porcelain.dimos import Dimos
