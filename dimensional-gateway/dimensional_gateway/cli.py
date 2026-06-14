@@ -76,6 +76,11 @@ def _create_session(robot: str | None) -> tuple[str, str]:
         raise typer.Exit(1)
     resp.raise_for_status()
     data = resp.json()
+    warnings = data.get("warnings", [])
+    for w in warnings:
+        typer.echo(f"Warning: {w}", err=True)
+    if warnings:
+        typer.echo(err=True)
     return data["session_id"], data["active_robot"]
 
 
@@ -179,6 +184,7 @@ def _stream_response(session_id: str, msg: str) -> bool:
             return True
         finally:
             stop.set()
+            t.join(timeout=0.2)
     typer.echo()
     return False
 

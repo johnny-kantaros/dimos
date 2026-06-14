@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+import functools
 import json
 
 import openai
@@ -44,6 +45,7 @@ def _add_status_param(tool: dict) -> dict:
     }
 
 
+@functools.cache
 def _build_system_tools() -> list[dict]:
     return [_add_status_param(cls.schema()) for cls in SYSTEM_TOOLS.values()]
 
@@ -75,8 +77,8 @@ async def _dispatch_tool(session: ChatSession, name: str, args: dict) -> str:
     return str(await asyncio.to_thread(lambda: getattr(session.skills, name)(**args)))
 
 
-def _event(type: str, **kwargs: object) -> str:
-    return f"data: {json.dumps({'type': type, **kwargs})}\n\n"
+def _event(event_type: str, **kwargs: object) -> str:
+    return f"data: {json.dumps({'type': event_type, **kwargs})}\n\n"
 
 
 async def _call_tool(session: ChatSession, tc_id: str, name: str, args: dict) -> dict:
@@ -137,12 +139,14 @@ async def run_agent(session: ChatSession) -> AsyncIterator[str]:
         tool_calls = list(tool_calls_acc.values())
 
         parsed: list[tuple[dict, dict]] = []
+        error_results: list[dict] = []
         for tc in tool_calls:
             try:
                 args = json.loads(tc["function"]["arguments"])
-            except Exception:
-                args = {}
-            if status := args.pop("_status", None):
+            except json.JSONDecodeError as exc:
+                error_results.append({"role": "tool", "tool_call_id": tc["id"], "content": f"Error: {exc}"})
+                continue
+            if (status := args.pop("_status", None)) is not None:
                 yield _event("status", content=status)
             parsed.append((tc, args))
 
@@ -152,11 +156,11 @@ async def run_agent(session: ChatSession) -> AsyncIterator[str]:
             "tool_calls": tool_calls,
         })
 
-        tool_results = await asyncio.gather(*[
+        gathered = await asyncio.gather(*[
             _call_tool(session, tc["id"], tc["function"]["name"], args)
             for tc, args in parsed
         ])
-        messages.extend(tool_results)
+        messages.extend(error_results + list(gathered))
         yield _event("thinking")
 
     if final_response:

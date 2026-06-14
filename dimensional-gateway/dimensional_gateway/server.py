@@ -34,6 +34,7 @@ class SessionCreate(BaseModel):
 class SessionInfo(BaseModel):
     session_id: str
     active_robot: str
+    warnings: list[str] = []
 
 
 class ChatRequest(BaseModel):
@@ -73,7 +74,11 @@ async def create_session(body: SessionCreate) -> SessionInfo:
     except Exception:
         _sessions.delete(session.session_id)
         raise HTTPException(503, f"Robot {body.robot!r} skills unavailable")
-    return SessionInfo(session_id=session.session_id, active_robot=session.active_robot)
+    warnings = [
+        f"Could not load skills for module '{name}': {err}"
+        for name, err in session.skills._errors.items()
+    ]
+    return SessionInfo(session_id=session.session_id, active_robot=session.active_robot, warnings=warnings)
 
 
 @app.get("/sessions", response_model=list[SessionInfo])
