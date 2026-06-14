@@ -54,10 +54,9 @@ class RobotRegistry:
             if robot.connection is None or not robot.connection.is_running:
                 conn = Dimos.connect(lcm_url=robot.info.lcm_url)
                 rpc_timeouts = conn._source._coord.rpc.rpc_timeouts
-                # Fail fast if the coordinator lock is held (e.g. a module start is stuck).
                 rpc_timeouts["list_modules"] = 5.0
-                # Normal module start takes ~1s; 60s gives headroom without a 20-min hang.
-                rpc_timeouts["restart_module_by_class_name"] = 20.0
+                rpc_timeouts["get_skills"] = 5.0
+                rpc_timeouts["restart_module_by_class_name"] = 60.0
                 robot.connection = conn
             return robot.connection
 

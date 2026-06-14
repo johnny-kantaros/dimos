@@ -68,6 +68,7 @@ async def create_session(body: SessionCreate) -> SessionInfo:
     except RuntimeError:
         raise HTTPException(503, f"Robot {body.robot!r} is not reachable")
     session = _sessions.create(robot=robot)
+    await asyncio.to_thread(session.skills._build_cache)
     return SessionInfo(session_id=session.session_id, active_robot=session.active_robot)
 
 

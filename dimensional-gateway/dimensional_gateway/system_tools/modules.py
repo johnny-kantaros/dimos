@@ -68,10 +68,18 @@ class RestartModuleTool(SystemTool):
 
     async def run(self, session: ChatSession, args: dict) -> str:
         module_name = args["module_name"]
-        await asyncio.to_thread(
-            session.connection._source.restart_module_by_class_name,
-            module_name,
-            reload_source=args.get("reload_source", True),
-        )
-        session.robot.stopped_modules.discard(module_name)
-        return f"Module '{module_name}' restarted."
+        stopped = session.robot.stopped_modules
+
+        async def _restart() -> None:
+            try:
+                await asyncio.to_thread(
+                    session.connection._source.restart_module_by_class_name,
+                    module_name,
+                    reload_source=args.get("reload_source", True),
+                )
+                stopped.discard(module_name)
+            except Exception:
+                pass
+
+        asyncio.create_task(_restart())
+        return f"Restarting '{module_name}' in the background — it will appear in active modules once ready."

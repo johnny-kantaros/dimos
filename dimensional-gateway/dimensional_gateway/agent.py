@@ -21,33 +21,23 @@ def _build_system_tools() -> list[dict]:
 
 
 def _fetch_robot_context(session: ChatSession) -> tuple[list[dict], list[str]]:
-    """Bypasses SkillsProxy._build_cache() to skip stopped modules before get_skills() is called."""
-
-    source = session.connection._source
     stopped = session.robot.stopped_modules
     robot_tools: list[dict] = []
-    active_names: list[str] = []
+    active_names: set[str] = set()
 
-    try:
-        for name in source.list_module_names():
-            if name in stopped:
+    for skill_name, entries in (session.skills._cache or {}).items():
+        for class_name, _, info in entries:
+            if class_name in stopped:
                 continue
-            try:
-                proxy = source.get_module(name)
-                for info in proxy.get_skills():
-                    schema = json.loads(info.args_schema)
-                    description = schema.get("description") or f"Execute {info.func_name} on {session.active_robot}"
-                    robot_tools.append({
-                        "type": "function",
-                        "function": {"name": info.func_name, "description": description, "parameters": schema},
-                    })
-                active_names.append(name)
-            except Exception:
-                pass
-    except Exception:
-        pass
+            schema = json.loads(info.args_schema)
+            description = schema.get("description") or f"Execute {skill_name} on {session.active_robot}"
+            robot_tools.append({
+                "type": "function",
+                "function": {"name": skill_name, "description": description, "parameters": schema},
+            })
+            active_names.add(class_name)
 
-    return robot_tools, active_names
+    return robot_tools, sorted(active_names)
 
 
 async def _dispatch_tool(session: ChatSession, name: str, args: dict) -> str:
