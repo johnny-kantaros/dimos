@@ -81,6 +81,15 @@ def list_sessions() -> list[SessionInfo]:
     return [SessionInfo(session_id=s.session_id, active_robot=s.active_robot) for s in _sessions.list_all()]
 
 
+@app.get("/sessions/{session_id}/history")
+async def get_history(session_id: str) -> list[dict[str, str]]:
+    session = _sessions.get(session_id)
+    if session is None:
+        raise HTTPException(404, f"Session {session_id!r} not found")
+    history = await session.history()
+    return [{"role": m.role, "content": m.content} for m in history]
+
+
 @app.delete("/sessions/{session_id}")
 def delete_session(session_id: str) -> dict[str, str]:
     if _sessions.get(session_id) is None:

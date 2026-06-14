@@ -56,6 +56,7 @@ def chat(
         if match is None:
             typer.echo(f"Session {existing_session_id!r} not found.")
             raise typer.Exit(1)
+        _print_history(existing_session_id)
         _continue_session(existing_session_id, match["active_robot"])
     else:
         session_id, robot_name = _create_session(robot)
@@ -91,10 +92,24 @@ def _select_robot() -> str:
     return robot
 
 
+def _print_history(session_id: str) -> None:
+    try:
+        resp = httpx.get(f"{_DAEMON_URL}/sessions/{session_id}/history", timeout=5.0)
+        resp.raise_for_status()
+        messages = resp.json()
+    except httpx.HTTPError:
+        return
+    for msg in messages:
+        if msg["role"] == "user":
+            typer.echo(f"\n> {msg['content']}")
+        elif msg["role"] == "assistant":
+            typer.echo(f"\n{msg['content']}")
+
+
 def _continue_session(session_id: str, robot: str) -> None:
     typer.echo(f"Connected to {robot}. Type 'exit' to detach.\n")
     _chat_loop(session_id)
-    typer.echo(f"\nTo resume: dimctl chat --resume {session_id}")
+    typer.echo(f"\nTo resume:\n  dimctl chat --resume {session_id}")
 
 
 def _spinner(stop: threading.Event) -> None:
