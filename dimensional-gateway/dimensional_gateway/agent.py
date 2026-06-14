@@ -16,8 +16,36 @@ _MODEL = "gpt-4o"
 _MAX_STEPS = 20
 
 
+_STATUS_PARAM = {
+    "type": "string",
+    "description": "One short sentence shown to the user before this tool runs (e.g. 'Checking active modules...')",
+}
+
+
+def _add_status_param(tool: dict) -> dict:
+    """Inject _status as a required parameter into every tool schema.
+
+    Rather than relying on the system prompt to ask the LLM to narrate its actions
+    (which it reliably ignores), making _status a required field in the schema forces
+    the model to provide a progress message on every call. We extract and stream it
+    before dispatch, then discard it so individual tools never see it.
+    """
+    params = tool["function"]["parameters"]
+    return {
+        **tool,
+        "function": {
+            **tool["function"],
+            "parameters": {
+                **params,
+                "properties": {**params.get("properties", {}), "_status": _STATUS_PARAM},
+                "required": [*params.get("required", []), "_status"],
+            },
+        },
+    }
+
+
 def _build_system_tools() -> list[dict]:
-    return [cls.schema() for cls in SYSTEM_TOOLS.values()]
+    return [_add_status_param(cls.schema()) for cls in SYSTEM_TOOLS.values()]
 
 
 def _fetch_robot_context(session: ChatSession) -> tuple[list[dict], list[str]]:
@@ -31,10 +59,10 @@ def _fetch_robot_context(session: ChatSession) -> tuple[list[dict], list[str]]:
                 continue
             schema = json.loads(info.args_schema)
             description = schema.get("description") or f"Execute {skill_name} on {session.active_robot}"
-            robot_tools.append({
+            robot_tools.append(_add_status_param({
                 "type": "function",
                 "function": {"name": skill_name, "description": description, "parameters": schema},
-            })
+            }))
             active_names.add(class_name)
 
     return robot_tools, sorted(active_names)
@@ -47,9 +75,12 @@ async def _dispatch_tool(session: ChatSession, name: str, args: dict) -> str:
     return str(await asyncio.to_thread(lambda: getattr(session.skills, name)(**args)))
 
 
-async def _call_tool(session: ChatSession, tc_id: str, name: str, arguments: str) -> dict:
+def _event(type: str, **kwargs: object) -> str:
+    return f"data: {json.dumps({'type': type, **kwargs})}\n\n"
+
+
+async def _call_tool(session: ChatSession, tc_id: str, name: str, args: dict) -> dict:
     try:
-        args = json.loads(arguments)
         content = await _dispatch_tool(session, name, args)
     except Exception as exc:
         content = f"Error: {exc}"
@@ -88,7 +119,7 @@ async def run_agent(session: ChatSession) -> AsyncIterator[str]:
             if delta.content:
                 step_text += delta.content
                 final_response += delta.content
-                yield f"data: {json.dumps(delta.content)}\n\n"
+                yield _event("token", content=delta.content)
 
             for tc in delta.tool_calls or []:
                 if tc.index not in tool_calls_acc:
@@ -104,16 +135,29 @@ async def run_agent(session: ChatSession) -> AsyncIterator[str]:
             break
 
         tool_calls = list(tool_calls_acc.values())
+
+        parsed: list[tuple[dict, dict]] = []
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except Exception:
+                args = {}
+            if status := args.pop("_status", None):
+                yield _event("status", content=status)
+            parsed.append((tc, args))
+
         messages.append({
             "role": "assistant",
             "content": step_text or None,
             "tool_calls": tool_calls,
         })
+
         tool_results = await asyncio.gather(*[
-            _call_tool(session, tc["id"], tc["function"]["name"], tc["function"]["arguments"])
-            for tc in tool_calls
+            _call_tool(session, tc["id"], tc["function"]["name"], args)
+            for tc, args in parsed
         ])
         messages.extend(tool_results)
+        yield _event("thinking")
 
     if final_response:
         await session.append("assistant", final_response)

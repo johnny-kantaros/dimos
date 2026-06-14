@@ -122,6 +122,19 @@ def _spinner(stop: threading.Event) -> None:
     typer.echo("\r" + " " * 14 + "\r", nl=False)
 
 
+def _start_spinner() -> tuple[threading.Event, threading.Thread]:
+    stop = threading.Event()
+    t = threading.Thread(target=_spinner, args=(stop,), daemon=True)
+    t.start()
+    return stop, t
+
+
+def _stop_spinner(stop: threading.Event, t: threading.Thread, timeout: float | None = None) -> None:
+    if not stop.is_set():
+        stop.set()
+        t.join(timeout=timeout)
+
+
 def _stream_response(session_id: str, msg: str) -> bool:
     """Stream a chat response. Returns True if interrupted by Ctrl+C."""
     with httpx.stream(
@@ -134,27 +147,39 @@ def _stream_response(session_id: str, msg: str) -> bool:
             typer.echo("Robot is no longer available. The session has been preserved.")
             return False
         r.raise_for_status()
-        typer.echo()
-        stop = threading.Event()
-        t = threading.Thread(target=_spinner, args=(stop,), daemon=True)
-        t.start()
+        stop, t = _start_spinner()
+        first_token = True
         try:
             for line in r.iter_lines():
-                if line.startswith("data: ") and line != "data: [DONE]":
-                    if not stop.is_set():
-                        stop.set()
-                        t.join()
-                    typer.echo(json.loads(line[6:]), nl=False)
-                    time.sleep(0.04)
+                if not line.startswith("data: ") or line == "data: [DONE]":
+                    continue
+                event = json.loads(line[6:])
+                etype = event.get("type") if isinstance(event, dict) else "token"
+
+                if etype == "token":
+                    _stop_spinner(stop, t)
+                    if first_token:
+                        typer.echo()
+                        first_token = False
+                    typer.echo(event["content"], nl=False)
+                    time.sleep(0.06)
+                elif etype == "status":
+                    _stop_spinner(stop, t)
+                    for ch in event["content"]:
+                        typer.echo(ch, nl=False)
+                        time.sleep(0.02)
+                    typer.echo()
+                    stop, t = _start_spinner()
+                elif etype == "thinking":
+                    if stop.is_set():
+                        stop, t = _start_spinner()
         except KeyboardInterrupt:
-            if not stop.is_set():
-                stop.set()
-                t.join(timeout=0.2)
-            typer.echo()  # move to a clean line
+            _stop_spinner(stop, t, timeout=0.2)
+            typer.echo()
             return True
         finally:
             stop.set()
-    typer.echo("\n")
+    typer.echo()
     return False
 
 
