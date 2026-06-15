@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import json
-import logging
 
 import httpx
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 _DAEMON_URL = "http://localhost:8128"
-_log = logging.getLogger(__name__)
 
 
 class _SessionGone(Exception):
@@ -76,13 +74,11 @@ class TelegramClient:
         await self._app.initialize()
         await self._app.updater.start_polling()
         await self._app.start()
-        _log.info("Telegram client started")
 
     async def stop(self) -> None:
         await self._app.updater.stop()
         await self._app.stop()
         await self._app.shutdown()
-        _log.info("Telegram client stopped")
 
     async def _resolve_session(self, chat_id: int) -> tuple[str, str] | None:
         if chat_id in self._sessions:
@@ -99,8 +95,7 @@ class TelegramClient:
         robot_name = robot or self._default_robot or robots[0]["name"]
         try:
             session_id = await _create_session(robot_name)
-        except (ValueError, ConnectionError, httpx.HTTPStatusError, httpx.TimeoutException) as e:
-            _log.warning("Could not create session: %s", e)
+        except (ValueError, ConnectionError, httpx.HTTPStatusError, httpx.TimeoutException):
             return None
         self._sessions[chat_id] = (session_id, robot_name)
         return session_id, robot_name
