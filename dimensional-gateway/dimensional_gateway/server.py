@@ -15,6 +15,7 @@ from dimensional_gateway.agent import run_agent
 from dimensional_gateway.discovery import Discovery
 from dimensional_gateway.robot_registry import RobotRegistry
 from dimensional_gateway.session import SessionStore
+from dimensional_gateway.telegram_client import TelegramClient
 
 _registry = RobotRegistry()
 _sessions = SessionStore()
@@ -45,13 +46,27 @@ class ChatRequest(BaseModel):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # type: ignore[type-arg]
     global _discovery
     _discovery = Discovery(on_add=_registry.add, on_remove=_registry.remove)
+
+    telegram: TelegramClient | None = None
+    if token := os.environ.get("TELEGRAM_BOT_TOKEN"):
+        telegram = TelegramClient(token)
+        await telegram.start()
+
     yield
+
+    if telegram:
+        await telegram.stop()
     if _discovery:
         _discovery.close()
     await asyncio.to_thread(_registry.stop_all_connections)
 
 
 app = FastAPI(title="Dimensional Gateway", version="0.1.0", lifespan=lifespan)
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 @app.get("/robots", response_model=list[RobotResponse])

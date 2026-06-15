@@ -13,11 +13,15 @@ import typer
 from dimensional_gateway.install import (
     install as _install_service,
     is_installed,
+    remove_env_var as _remove_env_var,
     restart as _restart_service,
+    set_env_var as _set_env_var,
     uninstall as _uninstall_service,
 )
 
 app = typer.Typer(help="dimctl — Dimensional robot control plane")
+_telegram_app = typer.Typer(help="Manage Telegram integration.")
+app.add_typer(_telegram_app, name="telegram")
 
 _DAEMON_URL = "http://localhost:8128"
 
@@ -253,7 +257,32 @@ def status() -> None:
 @app.command()
 def install() -> None:
     """Install dimctl as a login service (starts on boot, restarts on crash)."""
-    _install_service()
+    openai_key = questionary.password("Enter your OpenAI API key (required):").ask()
+    if not openai_key or not openai_key.strip():
+        typer.echo("OpenAI API key is required. Aborted.")
+        raise typer.Exit(1)
+
+    env_vars: dict[str, str] = {"OPENAI_API_KEY": openai_key.strip()}
+
+    while True:
+        token = questionary.password(
+            "Enter your Telegram bot token (optional, press enter to skip):"
+        ).ask()
+        if not token or not token.strip():
+            break
+        token = token.strip()
+        try:
+            resp = httpx.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5.0)
+        except httpx.ConnectError:
+            typer.echo("Could not reach Telegram. Check your internet connection and try again.")
+            continue
+        if resp.status_code == 401:
+            typer.echo("Invalid token. Try again, or press enter to skip.")
+            continue
+        env_vars["TELEGRAM_BOT_TOKEN"] = token
+        break
+
+    _install_service(env_vars=env_vars)
 
 
 @app.command()
@@ -276,6 +305,46 @@ def _get(path: str) -> list:  # type: ignore[type-arg]
     except httpx.ConnectError:
         typer.echo("Gateway daemon is not running. Run 'dimctl install' to set it up.")
         raise typer.Exit(1)
+
+
+@_telegram_app.command("setup")
+def telegram_setup() -> None:
+    """Configure a Telegram bot token and restart the daemon."""
+    try:
+        httpx.get(f"{_DAEMON_URL}/health", timeout=3.0).raise_for_status()
+    except (httpx.ConnectError, httpx.HTTPError):
+        typer.echo("Gateway daemon is not running. Run 'dimctl install' to set it up.")
+        raise typer.Exit(1)
+
+    typer.echo(
+        "To create a Telegram bot:\n"
+        "  1. Open Telegram and message @BotFather\n"
+        "  2. Send /newbot and follow the prompts\n"
+        "  3. BotFather will give you a token like: 123456:ABC-DEF...\n"
+    )
+    while True:
+        token = questionary.password("Paste your bot token:").ask()
+        if not token or not token.strip():
+            typer.echo("Aborted.")
+            raise typer.Exit(1)
+        token = token.strip()
+        try:
+            resp = httpx.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5.0)
+        except httpx.ConnectError:
+            typer.echo("Could not reach Telegram. Check your internet connection and try again.")
+            continue
+        if resp.status_code == 401:
+            typer.echo("Invalid token. Try again, or press Ctrl+C to cancel.")
+            continue
+        break
+
+    _set_env_var("TELEGRAM_BOT_TOKEN", token)
+
+
+@_telegram_app.command("remove")
+def telegram_remove() -> None:
+    """Remove the Telegram bot token and restart the daemon."""
+    _remove_env_var("TELEGRAM_BOT_TOKEN")
 
 
 def main() -> None:

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import platform
+import plistlib
 import shlex
 import subprocess
 import sys
-from xml.sax.saxutils import escape
 
 _LABEL = "com.dimensional.gateway"
 _PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{_LABEL}.plist"
@@ -21,11 +21,11 @@ def is_installed() -> bool:
     return False
 
 
-def install() -> None:
+def install(env_vars: dict[str, str] | None = None) -> None:
     if platform.system() == "Darwin":
-        _install_mac()
+        _install_mac(env_vars or {})
     elif platform.system() == "Linux":
-        _install_linux()
+        _install_linux(env_vars or {})
     else:
         print(f"Unsupported platform: {platform.system()}")
         sys.exit(1)
@@ -36,6 +36,24 @@ def uninstall() -> None:
         _uninstall_mac()
     elif platform.system() == "Linux":
         _uninstall_linux()
+
+
+def set_env_var(key: str, value: str) -> None:
+    if platform.system() == "Darwin":
+        _set_env_var_mac(key, value)
+    elif platform.system() == "Linux":
+        _set_env_var_linux(key, value)
+    else:
+        print(f"Unsupported platform: {platform.system()}")
+
+
+def remove_env_var(key: str) -> None:
+    if platform.system() == "Darwin":
+        _remove_env_var_mac(key)
+    elif platform.system() == "Linux":
+        _remove_env_var_linux(key)
+    else:
+        print(f"Unsupported platform: {platform.system()}")
 
 
 def restart() -> None:
@@ -60,35 +78,22 @@ def _find_executable() -> list[str]:
     return [sys.executable, "-m", "dimensional_gateway"]
 
 
-def _install_mac() -> None:
+def _install_mac(env_vars: dict[str, str]) -> None:
     _PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    args = "\n".join(f"        <string>{escape(a)}</string>" for a in _find_executable())
-    plist = f"""\
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{_LABEL}</string>
-    <key>ProgramArguments</key>
-    <array>
-{args}
-    </array>
-    <key>KeepAlive</key>
-    <true/>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>{escape(str(_LOG_PATH))}</string>
-    <key>StandardErrorPath</key>
-    <string>{escape(str(_LOG_PATH))}</string>
-</dict>
-</plist>
-"""
-    _PLIST_PATH.write_text(plist)
+    data: dict = {
+        "Label": _LABEL,
+        "ProgramArguments": _find_executable(),
+        "KeepAlive": True,
+        "RunAtLoad": True,
+        "StandardOutPath": str(_LOG_PATH),
+        "StandardErrorPath": str(_LOG_PATH),
+    }
+    if env_vars:
+        data["EnvironmentVariables"] = env_vars
+
+    _PLIST_PATH.write_bytes(plistlib.dumps(data))
     subprocess.run(["launchctl", "unload", str(_PLIST_PATH)], capture_output=True)
     result = subprocess.run(
         ["launchctl", "load", "-w", str(_PLIST_PATH)],
@@ -111,9 +116,11 @@ def _uninstall_mac() -> None:
     print("  dimctl removed.")
 
 
-def _install_linux() -> None:
+def _install_linux(env_vars: dict[str, str]) -> None:
     _SYSTEMD_PATH.parent.mkdir(parents=True, exist_ok=True)
     exec_start = " ".join(shlex.quote(a) for a in _find_executable())
+    all_env = {"PYTHONUNBUFFERED": "1", **env_vars}
+    env_lines = "\n".join(f"Environment={k}={v}" for k, v in all_env.items())
     unit = f"""\
 [Unit]
 Description=Dimensional Gateway
@@ -124,7 +131,7 @@ Type=simple
 ExecStart={exec_start}
 Restart=always
 RestartSec=5
-Environment=PYTHONUNBUFFERED=1
+{env_lines}
 
 [Install]
 WantedBy=default.target
@@ -157,3 +164,80 @@ def _uninstall_linux() -> None:
     _SYSTEMD_PATH.unlink()
     subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
     print("  dimctl removed.")
+
+
+def _reload_mac() -> None:
+    subprocess.run(["launchctl", "unload", str(_PLIST_PATH)], capture_output=True)
+    result = subprocess.run(
+        ["launchctl", "load", "-w", str(_PLIST_PATH)], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print(f"  Warning: launchctl reload failed: {result.stderr.strip()}")
+
+
+def _set_env_var_mac(key: str, value: str) -> None:
+    if not _PLIST_PATH.exists():
+        print("  dimctl is not installed. Run 'dimctl install' first.")
+        return
+    data = plistlib.loads(_PLIST_PATH.read_bytes())
+    env = data.get("EnvironmentVariables", {})
+    env[key] = value
+    data["EnvironmentVariables"] = env
+    _PLIST_PATH.write_bytes(plistlib.dumps(data))
+    _reload_mac()
+    print(f"  {key} configured. dimctl restarted.")
+
+
+def _remove_env_var_mac(key: str) -> None:
+    if not _PLIST_PATH.exists():
+        print("  dimctl is not installed.")
+        return
+    data = plistlib.loads(_PLIST_PATH.read_bytes())
+    env = data.get("EnvironmentVariables", {})
+    if key not in env:
+        print(f"  {key} is not set.")
+        return
+    del env[key]
+    if env:
+        data["EnvironmentVariables"] = env
+    else:
+        data.pop("EnvironmentVariables", None)
+    _PLIST_PATH.write_bytes(plistlib.dumps(data))
+    _reload_mac()
+    print(f"  {key} removed. dimctl restarted.")
+
+
+def _set_env_var_linux(key: str, value: str) -> None:
+    if not _SYSTEMD_PATH.exists():
+        print("  dimctl is not installed. Run 'dimctl install' first.")
+        return
+    lines = _SYSTEMD_PATH.read_text().splitlines()
+    lines = [l for l in lines if not l.startswith(f"Environment={key}=")]
+    insert_at = next((i for i, l in enumerate(lines) if l.strip() == "[Install]"), len(lines))
+    lines.insert(insert_at, f"Environment={key}={value}")
+    _SYSTEMD_PATH.write_text("\n".join(lines) + "\n")
+    try:
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        subprocess.run(["systemctl", "--user", "restart", "dimensional-gateway"], check=True)
+        print(f"  {key} configured. dimctl restarted.")
+    except subprocess.CalledProcessError as e:
+        print(f"  Failed to restart: {e}")
+
+
+def _remove_env_var_linux(key: str) -> None:
+    if not _SYSTEMD_PATH.exists():
+        print("  dimctl is not installed.")
+        return
+    lines = _SYSTEMD_PATH.read_text().splitlines()
+    original = len(lines)
+    lines = [l for l in lines if not l.startswith(f"Environment={key}=")]
+    if len(lines) == original:
+        print(f"  {key} is not set.")
+        return
+    _SYSTEMD_PATH.write_text("\n".join(lines) + "\n")
+    try:
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        subprocess.run(["systemctl", "--user", "restart", "dimensional-gateway"], check=True)
+        print(f"  {key} removed. dimctl restarted.")
+    except subprocess.CalledProcessError as e:
+        print(f"  Failed to restart: {e}")
