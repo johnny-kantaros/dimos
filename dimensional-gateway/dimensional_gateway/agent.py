@@ -14,7 +14,7 @@ from dimensional_gateway.system_tools import SYSTEM_TOOLS
 _client = openai.AsyncOpenAI()
 _MODEL = "gpt-4o"
 
-_MAX_STEPS = 20
+_MAX_STEPS = 50
 
 
 _STATUS_PARAM = {
